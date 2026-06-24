@@ -1,17 +1,27 @@
-"""SyftBox app entry point.
+"""SyftBox app — Dare Workflow Runner.
 
-Exposes:
-  GET  /                    — HTML dashboard
-  GET  /ping                — health check
-  GET  /keys/status         — which LLM providers are configured (no key values)
-  POST /keys                — save an API key / config value
-  DELETE /keys/{provider}   — remove a key
-  GET  /config              — non-secret config (files_folder, embed_provider, embed_model)
-  GET  /files               — list files in the configured folder
-  POST /index               — chunk + embed + store all files in ChromaDB
-  GET  /index/status        — which files are indexed, model used, timestamp
-  POST /run                 — execute an exported Dare workflow
+Endpoints:
+  GET  /                      HTML dashboard
+  GET  /ping                  health check
+
+  POST /workflow/upload        upload a workflow JSON file
+  POST /workflow/path          load workflow from a local file path
+  GET  /workflow/info          parsed workflow metadata
+  DELETE /workflow/clear       remove stored workflow
+
+  GET  /keys/status            configured LLM providers
+  POST /keys                   save a key / config value
+  DELETE /keys/{provider}      remove a key
+
+  GET  /config                 non-secret config (files folder, embed model)
+  GET  /files                  list files in the configured folder
+
+  POST /index                  chunk + embed all files into ChromaDB
+  GET  /index/status           per-file index state
+
+  POST /run                    run the stored workflow
 """
+import copy
 import json
 import logging
 import uuid
@@ -20,12 +30,13 @@ from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
-from fastapi import HTTPException
+from fastapi import HTTPException, UploadFile, File as FastAPIFile
 from fastapi.responses import HTMLResponse
 from fastsyftbox import FastSyftBox
 from pydantic import BaseModel
 from syft_core import Client
 
+from clients.llm_client import LLMClient
 from embedding_pipeline import EmbeddingPipeline
 from execution_engine import ExecutionEngine
 from file_store import FileStore
@@ -33,6 +44,7 @@ from key_store import KeyStore
 from services import Services
 from vector_store import VectorStore
 from workflow_loader import load_workflow
+from workflow_store import WorkflowStore
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +60,7 @@ app = FastSyftBox(
 
 
 # ---------------------------------------------------------------------------
-# Shared singletons (initialised once at startup)
+# Singletons
 # ---------------------------------------------------------------------------
 
 def _init_data_dir() -> Path:
@@ -59,24 +71,66 @@ def _init_data_dir() -> Path:
         return Path(__file__).resolve().parent / ".local_data"
 
 
-_DATA_DIR = _init_data_dir()
-key_store = KeyStore(_DATA_DIR)
+_DATA_DIR     = _init_data_dir()
+key_store     = KeyStore(_DATA_DIR)
+workflow_store = WorkflowStore(_DATA_DIR)
 
 
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
 
+class WorkflowPathRequest(BaseModel):
+    path: str
+
 class SaveKeyRequest(BaseModel):
     provider: str
     key: str
 
-
 class RunRequest(BaseModel):
-    workflow: Optional[dict] = None
-    workflowId: Optional[int] = None
-    dareBaseUrl: Optional[str] = None
-    dareToken: Optional[str] = None
+    user_input: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Workflow endpoints
+# ---------------------------------------------------------------------------
+
+@app.post("/workflow/upload", tags=["syftbox"])
+async def workflow_upload(file: UploadFile = FastAPIFile(...)):
+    content = await file.read()
+    try:
+        payload = json.loads(content)
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
+    workflow_store.save(payload)
+    return {"ok": True, "title": payload.get("title", "Untitled")}
+
+
+@app.post("/workflow/path", tags=["syftbox"])
+def workflow_from_path(body: WorkflowPathRequest):
+    p = Path(body.path)
+    if not p.exists():
+        raise HTTPException(status_code=400, detail=f"File not found: {body.path}")
+    try:
+        payload = json.loads(p.read_text())
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
+    workflow_store.save(payload)
+    return {"ok": True, "title": payload.get("title", "Untitled")}
+
+
+@app.get("/workflow/info", tags=["syftbox"])
+def workflow_info():
+    info = workflow_store.get_info()
+    if info is None:
+        return {}
+    return info
+
+
+@app.delete("/workflow/clear", tags=["syftbox"])
+def workflow_clear():
+    workflow_store.clear()
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------
@@ -103,7 +157,7 @@ def delete_key(provider: str):
 
 
 # ---------------------------------------------------------------------------
-# Config
+# Config + Files
 # ---------------------------------------------------------------------------
 
 @app.get("/config", tags=["syftbox"])
@@ -117,10 +171,6 @@ def get_config():
         "embed_model":        key_store.get("embed_model")    or "text-embedding-3-small",
     }
 
-
-# ---------------------------------------------------------------------------
-# Files
-# ---------------------------------------------------------------------------
 
 @app.get("/files", tags=["syftbox"])
 def list_files():
@@ -140,14 +190,8 @@ def list_files():
 def _make_embed_pipeline() -> EmbeddingPipeline:
     provider = key_store.get("embed_provider") or "openai"
     model    = key_store.get("embed_model")    or "text-embedding-3-small"
-    api_keys = {}
-    for p in ("openai", "claude", "gemini"):
-        v = key_store.get(p)
-        if v:
-            api_keys[p] = v
-    ollama_host = key_store.get("ollama")
-    from clients.llm_client import LLMClient
-    llm = LLMClient(api_keys=api_keys or None, ollama_host=ollama_host)
+    api_keys = {p: v for p in ("openai", "claude", "gemini") if (v := key_store.get(p))}
+    llm = LLMClient(api_keys=api_keys or None, ollama_host=key_store.get("ollama"))
     return EmbeddingPipeline(
         vector_store=VectorStore(_DATA_DIR),
         llm_client=llm,
@@ -161,47 +205,52 @@ def _make_embed_pipeline() -> EmbeddingPipeline:
 def index_files():
     folder = key_store.get("files_folder")
     file_store = FileStore(folder)
-
     if not file_store.is_configured():
-        return {"error": "No files folder configured. Set it in the dashboard first."}
-
+        return {"error": "No files folder configured."}
     files = file_store.list_files()
     if not files:
-        return {"error": "Files folder is empty — nothing to index."}
+        return {"error": "Files folder is empty."}
 
     pipeline = _make_embed_pipeline()
     indexed, failed = [], []
-
     for f in files:
         try:
             content = file_store.get_content(f["name"])
-            n_chunks = pipeline.index_file(f["name"], content)
-            indexed.append({"name": f["name"], "chunks": n_chunks})
-            logger.info("Indexed %s (%d chunks)", f["name"], n_chunks)
+            n = pipeline.index_file(f["name"], content)
+            indexed.append({"name": f["name"], "chunks": n})
         except Exception as e:
-            logger.error("Failed to index %s: %s", f["name"], e)
             failed.append({"name": f["name"], "error": str(e)})
 
-    return {
-        "indexed": indexed,
-        "failed":  failed,
-        "total_chunks": sum(i["chunks"] for i in indexed),
-    }
+    return {"indexed": indexed, "failed": failed,
+            "total_chunks": sum(i["chunks"] for i in indexed)}
 
 
 @app.get("/index/status", tags=["syftbox"])
 def index_status():
-    pipeline = _make_embed_pipeline()
-    return pipeline.get_status()
+    return _make_embed_pipeline().get_status()
 
 
 # ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
 
+def _inject_user_input(workflow: dict, user_input: str) -> dict:
+    """Replace {{user_input}} in all prompt content and text input fields."""
+    workflow = copy.deepcopy(workflow)
+    for node in workflow.get("nodes", []):
+        data = node.get("data", {})
+        prompt = data.get("prompt") or {}
+        if isinstance(prompt.get("content"), str):
+            prompt["content"] = prompt["content"].replace("{{user_input}}", user_input)
+        for key in ("textInput", "text_input"):
+            if isinstance(data.get(key), str):
+                data[key] = data[key].replace("{{user_input}}", user_input)
+    return workflow
+
+
 def _save_result(result: dict) -> Optional[str]:
     try:
-        client  = Client.load()
+        client   = Client.load()
         runs_dir = Path(client.app_data(app_name)) / "runs"
         runs_dir.mkdir(parents=True, exist_ok=True)
         wid  = result.get("workflow_id", "unknown")
@@ -210,266 +259,483 @@ def _save_result(result: dict) -> Optional[str]:
         path.write_text(json.dumps(result, indent=2, default=str))
         return str(path)
     except Exception as e:
-        logger.warning("Could not save run result to datasite: %s", e)
+        logger.warning("Could not save run result: %s", e)
         return None
 
 
 @app.api_route("/run", methods=["POST"], tags=["syftbox"])
 def run(data: RunRequest):
-    services = Services.from_config(
-        base_url=data.dareBaseUrl,
-        token=data.dareToken,
-        key_store=key_store,
-        data_dir=_DATA_DIR,
-    )
+    payload = workflow_store.load()
+    if payload is None:
+        return {"error": "No workflow loaded. Upload a workflow JSON first."}
 
-    if data.workflow is not None:
-        payload = data.workflow
-    elif data.workflowId is not None:
-        payload = services.dare.export_workflow(data.workflowId)
-    else:
-        return {"error": "Provide 'workflow' (inline export) or 'workflowId'."}
+    if data.user_input:
+        payload = _inject_user_input(payload, data.user_input)
 
     try:
         graph = load_workflow(payload)
     except ValueError as e:
-        return {"error": f"Invalid workflow export: {e}"}
+        return {"error": f"Invalid workflow: {e}"}
 
-    result = ExecutionEngine(graph, services).run()
+    services = Services.from_config(key_store=key_store, data_dir=_DATA_DIR)
+    result   = ExecutionEngine(graph, services).run()
     result["saved_to"] = _save_result(result)
     return result
 
 
 # ---------------------------------------------------------------------------
-# HTML dashboard
+# Dashboard HTML
 # ---------------------------------------------------------------------------
 
 _HTML = """<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Dare Workflow Runner</title>
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background: #f5f5f7; color: #1d1d1f; min-height: 100vh;
-  }
-  header {
-    background: #1d1d1f; color: #f5f5f7;
-    padding: 20px 32px; display: flex; align-items: center; gap: 12px;
-  }
-  header h1 { font-size: 1.2rem; font-weight: 600; }
-  header span { font-size: .8rem; opacity: .5; margin-left: 4px; }
-  .ping-dot {
-    width: 8px; height: 8px; border-radius: 50%;
-    background: #30d158; margin-left: auto;
-    box-shadow: 0 0 0 2px rgba(48,209,88,.3);
-  }
-  main { max-width: 640px; margin: 40px auto; padding: 0 16px 60px; }
-  h2 {
-    font-size: .78rem; font-weight: 600; color: #6e6e73;
-    text-transform: uppercase; letter-spacing: .5px; margin: 32px 0 10px;
-  }
-  h2:first-child { margin-top: 0; }
-  .card {
-    background: #fff; border-radius: 12px; margin-bottom: 10px;
-    overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.08);
-  }
-  .card-header {
-    display: flex; align-items: center; gap: 12px; padding: 16px 20px;
-  }
-  .icon { font-size: 1.3rem; width: 34px; text-align: center; flex-shrink: 0; }
-  .info { flex: 1; }
-  .info h3 { font-size: .9rem; font-weight: 600; margin-bottom: 3px; }
-  .info p  { font-size: .78rem; color: #6e6e73; word-break: break-all; }
-  .badge {
-    display: inline-block; font-size: .72rem; font-weight: 500;
-    padding: 2px 8px; border-radius: 20px;
-  }
-  .badge.ok   { background: #d1f9e0; color: #1a7f3c; }
-  .badge.env  { background: #fef3c7; color: #92400e; }
-  .badge.miss { background: #f1f1f4; color: #6e6e73; }
-  .btn {
-    border: none; border-radius: 8px; cursor: pointer;
-    font-size: .82rem; font-weight: 500; padding: 7px 14px;
-    transition: background .15s; white-space: nowrap;
-  }
-  .btn:disabled { opacity: .5; cursor: not-allowed; }
-  .btn-edit  { background: #f1f1f4; color: #1d1d1f; }
-  .btn-edit:hover:not(:disabled) { background: #e3e3e8; }
-  .btn-save  { background: #0071e3; color: #fff; }
-  .btn-save:hover:not(:disabled) { background: #0077ed; }
-  .btn-del   { background: #fff0f0; color: #d12f2f; }
-  .btn-del:hover:not(:disabled)  { background: #fde8e8; }
-  .btn-index { background: #5856d6; color: #fff; }
-  .btn-index:hover:not(:disabled) { background: #4845c4; }
-  .edit-row {
-    display: none; padding: 0 20px 16px;
-    gap: 8px; align-items: center; flex-wrap: wrap;
-  }
-  .edit-row.open { display: flex; }
-  .edit-row input, .edit-row select {
-    flex: 1; min-width: 0;
-    border: 1.5px solid #d2d2d7; border-radius: 8px;
-    padding: 8px 12px; font-size: .85rem; outline: none; background: #f9f9fb;
-  }
-  .edit-row input:focus, .edit-row select:focus {
-    border-color: #0071e3; background: #fff;
-  }
-  .msg { font-size: .78rem; padding: 4px 0; color: #6e6e73; flex-basis: 100%; }
-  .msg.err { color: #d12f2f; }
-  .msg.ok  { color: #1a7f3c; }
-  .file-list { padding: 0 20px 16px; }
-  .file-empty { font-size: .82rem; color: #aeaeb2; padding: 8px 0; }
-  .file-item {
-    display: flex; align-items: center; gap: 8px;
-    padding: 7px 0; border-bottom: 1px solid #f1f1f4; font-size: .85rem;
-  }
-  .file-item:last-child { border-bottom: none; }
-  .file-name { flex: 1; font-family: "SF Mono", ui-monospace, monospace; font-size: .8rem; }
-  .file-meta { color: #aeaeb2; font-size: .72rem; white-space: nowrap; }
-  .index-bar {
-    padding: 14px 20px; display: flex;
-    justify-content: space-between; align-items: center; gap: 12px;
-  }
-  .index-bar span { font-size: .85rem; color: #6e6e73; }
-  footer { text-align: center; padding: 32px 0; font-size: .78rem; color: #aeaeb2; }
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: #f5f5f7; color: #1d1d1f; min-height: 100vh;
+}
+header {
+  background: #1d1d1f; color: #f5f5f7;
+  padding: 18px 32px; display: flex; align-items: center;
+}
+header h1 { font-size: 1.1rem; font-weight: 600; }
+header span { font-size: .78rem; opacity: .45; margin-left: 6px; }
+.ping { width: 8px; height: 8px; border-radius: 50%; background: #30d158; margin-left: auto; }
+
+main { max-width: 680px; margin: 36px auto; padding: 0 16px 80px; }
+
+/* Step */
+.step { margin-bottom: 10px; }
+.step-hd {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 10px;
+}
+.step-num {
+  width: 26px; height: 26px; border-radius: 50%;
+  background: #1d1d1f; color: #fff;
+  font-size: .75rem; font-weight: 700;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.step-hd h2 { font-size: .8rem; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: #6e6e73; }
+
+/* Card */
+.card {
+  background: #fff; border-radius: 12px; margin-bottom: 8px;
+  overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.08);
+}
+.card-row {
+  display: flex; align-items: center; gap: 12px; padding: 14px 18px;
+}
+.icon { font-size: 1.25rem; width: 32px; text-align: center; flex-shrink: 0; }
+.info { flex: 1; min-width: 0; }
+.info h3 { font-size: .88rem; font-weight: 600; margin-bottom: 2px; }
+.info p  { font-size: .76rem; color: #6e6e73; word-break: break-all; }
+
+/* Tabs */
+.tabs { display: flex; gap: 2px; padding: 12px 18px 0; }
+.tab {
+  border: none; background: #f1f1f4; color: #6e6e73;
+  padding: 6px 14px; border-radius: 8px 8px 0 0;
+  font-size: .82rem; font-weight: 500; cursor: pointer;
+}
+.tab.active { background: #fff; color: #1d1d1f; }
+.tab-body { padding: 14px 18px; }
+.tab-body.hidden { display: none; }
+
+/* Inputs */
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.row:last-child { margin-bottom: 0; }
+input[type=text], input[type=password], select, textarea {
+  flex: 1; min-width: 0;
+  border: 1.5px solid #d2d2d7; border-radius: 8px;
+  padding: 8px 11px; font-size: .85rem; outline: none; background: #f9f9fb;
+  font-family: inherit;
+}
+input:focus, select:focus, textarea:focus { border-color: #0071e3; background: #fff; }
+textarea { resize: vertical; min-height: 80px; font-family: inherit; }
+
+/* Buttons */
+.btn {
+  border: none; border-radius: 8px; cursor: pointer;
+  font-size: .82rem; font-weight: 500; padding: 8px 15px;
+  transition: background .15s; white-space: nowrap;
+}
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn-ghost  { background: #f1f1f4; color: #1d1d1f; }
+.btn-ghost:hover:not(:disabled) { background: #e3e3e8; }
+.btn-primary { background: #0071e3; color: #fff; }
+.btn-primary:hover:not(:disabled) { background: #0077ed; }
+.btn-danger  { background: #fff0f0; color: #d12f2f; }
+.btn-danger:hover:not(:disabled)  { background: #fde8e8; }
+.btn-run {
+  width: 100%; padding: 13px; font-size: 1rem; font-weight: 600;
+  background: #1d1d1f; color: #fff; border-radius: 10px;
+  border: none; cursor: pointer; transition: background .15s;
+}
+.btn-run:hover:not(:disabled) { background: #3a3a3c; }
+.btn-run:disabled { opacity: .4; cursor: not-allowed; }
+
+/* Badges */
+.badge {
+  display: inline-block; font-size: .7rem; font-weight: 600;
+  padding: 2px 8px; border-radius: 20px; margin-right: 4px;
+}
+.ok   { background: #d1f9e0; color: #1a7f3c; }
+.warn { background: #fff3cd; color: #856404; }
+.miss { background: #f1f1f4; color: #6e6e73; }
+.err  { background: #ffe5e5; color: #d12f2f; }
+
+/* File list */
+.flist { padding: 0 18px 14px; }
+.frow  {
+  display: flex; align-items: center; gap: 8px; padding: 6px 0;
+  border-bottom: 1px solid #f1f1f4; font-size: .82rem;
+}
+.frow:last-child { border-bottom: none; }
+.fname { flex: 1; font-family: "SF Mono", ui-monospace, monospace; font-size: .78rem; }
+.fmeta { color: #aeaeb2; font-size: .72rem; white-space: nowrap; }
+.fempty { font-size: .82rem; color: #aeaeb2; padding: 8px 0; }
+
+/* Workflow info */
+.wf-info { padding: 14px 18px; }
+.wf-title { font-size: 1rem; font-weight: 700; margin-bottom: 4px; }
+.wf-desc  { font-size: .82rem; color: #6e6e73; margin-bottom: 12px; }
+.wf-steps { margin-bottom: 12px; }
+.wf-step  {
+  display: flex; gap: 10px; padding: 8px 0;
+  border-bottom: 1px solid #f1f1f4;
+}
+.wf-step:last-child { border-bottom: none; }
+.wf-step-label { font-size: .82rem; font-weight: 600; min-width: 90px; }
+.wf-step-model { font-size: .75rem; color: #6e6e73; }
+.wf-step-prompt {
+  font-size: .75rem; color: #aeaeb2; font-family: "SF Mono", ui-monospace, monospace;
+  margin-top: 2px; white-space: pre-wrap; word-break: break-word;
+}
+.wf-needs { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* Results */
+.result-card {
+  background: #fff; border-radius: 10px; margin-bottom: 8px;
+  overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.08);
+}
+.result-hd {
+  display: flex; align-items: center; gap: 8px;
+  padding: 11px 16px; cursor: pointer; user-select: none;
+}
+.result-hd:hover { background: #fafafa; }
+.result-type { font-size: .7rem; font-weight: 600; color: #6e6e73; text-transform: uppercase; }
+.result-label { flex: 1; font-size: .88rem; font-weight: 600; }
+.result-body {
+  padding: 0 16px 14px; display: none;
+}
+.result-body.open { display: block; }
+.result-out {
+  white-space: pre-wrap; font-size: .82rem; line-height: 1.6;
+  background: #f9f9fb; border-radius: 8px; padding: 10px 12px;
+  font-family: inherit; word-break: break-word;
+}
+.result-err { color: #d12f2f; }
+.result-skip { color: #aeaeb2; font-style: italic; }
+
+/* Msg */
+.msg { font-size: .76rem; margin-top: 6px; }
+.msg.ok  { color: #1a7f3c; }
+.msg.err { color: #d12f2f; }
+
+/* Divider */
+.divider { height: 1px; background: #e5e5ea; margin: 6px 0; }
+
+/* Index bar */
+.ibar { display: flex; justify-content: space-between; align-items: center; padding: 12px 18px; }
+.ibar span { font-size: .82rem; color: #6e6e73; }
 </style>
 </head>
 <body>
 <header>
-  <div><h1>Dare Workflow Runner <span>SyftBox</span></h1></div>
-  <div class="ping-dot" id="pingDot"></div>
+  <h1>Dare Workflow Runner <span>SyftBox</span></h1>
+  <div class="ping" id="pingDot"></div>
 </header>
-<main>
+<main id="main">
 
-  <!-- ── LLM Keys ──────────────────────────────────────── -->
-  <h2>LLM API Keys</h2>
-  <div id="keysSection">Loading…</div>
+  <!-- ① Workflow ─────────────────────────────────── -->
+  <div class="step" id="step1">
+    <div class="step-hd"><div class="step-num">1</div><h2>Workflow</h2></div>
 
-  <!-- ── Files Folder ─────────────────────────────────── -->
-  <h2>Files Folder</h2>
-  <div class="card">
-    <div class="card-header">
-      <div class="icon">📁</div>
-      <div class="info">
-        <h3>Source folder</h3>
-        <p id="folderPath" style="color:#aeaeb2">Loading…</p>
+    <div class="card" id="loadCard">
+      <div class="tabs">
+        <button class="tab active" onclick="switchTab('upload')">Upload JSON</button>
+        <button class="tab" onclick="switchTab('path')">Local Path</button>
       </div>
-      <button class="btn btn-edit" onclick="toggleFolder()">Change</button>
-    </div>
-    <div class="edit-row" id="folderEditRow">
-      <input type="text" id="folderInput" placeholder="/Users/you/Documents/my-project/" />
-      <button class="btn btn-save" onclick="saveFolder()">Save</button>
-      <div class="msg" id="folderMsg"></div>
-    </div>
-  </div>
-
-  <h2>Files in Folder</h2>
-  <div class="card">
-    <div id="fileList" class="file-list">
-      <p class="file-empty">Set a files folder above to see available files.</p>
-    </div>
-  </div>
-
-  <!-- ── Embeddings ───────────────────────────────────── -->
-  <h2>Embedding Model</h2>
-  <div class="card">
-    <div class="card-header">
-      <div class="icon">🔍</div>
-      <div class="info">
-        <h3>Provider &amp; model</h3>
-        <p id="embedInfo" style="color:#aeaeb2">Loading…</p>
+      <div class="tab-body" id="tab-upload">
+        <div class="row">
+          <label class="btn btn-ghost" style="cursor:pointer">
+            Choose file
+            <input type="file" accept=".json" style="display:none" onchange="uploadWorkflow(this)">
+          </label>
+          <span id="uploadName" style="font-size:.82rem;color:#aeaeb2">No file chosen</span>
+        </div>
+        <div class="msg" id="uploadMsg"></div>
       </div>
-      <button class="btn btn-edit" onclick="toggleEmbed()">Configure</button>
+      <div class="tab-body hidden" id="tab-path">
+        <div class="row">
+          <input type="text" id="pathInput" placeholder="/Users/you/workflows/my-workflow.json">
+          <button class="btn btn-primary" onclick="loadFromPath()">Load</button>
+        </div>
+        <div class="msg" id="pathMsg"></div>
+      </div>
     </div>
-    <div class="edit-row" id="embedEditRow">
-      <select id="embedProvider" onchange="updateEmbedPlaceholder()">
-        <option value="openai">OpenAI</option>
-        <option value="ollama">Ollama</option>
-      </select>
-      <input type="text" id="embedModel" placeholder="text-embedding-3-small" />
-      <button class="btn btn-save" onclick="saveEmbed()">Save</button>
-      <div class="msg" id="embedMsg"></div>
+
+    <div class="card" id="wfCard" style="display:none">
+      <div class="card-row">
+        <div class="icon">⚙️</div>
+        <div class="info" id="wfMeta"></div>
+        <button class="btn btn-danger" onclick="clearWorkflow()">Remove</button>
+      </div>
+      <div class="divider"></div>
+      <div class="wf-info">
+        <div class="wf-steps" id="wfSteps"></div>
+        <div class="wf-needs" id="wfNeeds"></div>
+      </div>
     </div>
   </div>
 
-  <!-- ── Index Status ─────────────────────────────────── -->
-  <h2>Index Status</h2>
-  <div class="card">
-    <div class="index-bar">
-      <span id="indexSummary">Loading…</span>
-      <button class="btn btn-index" id="indexBtn" onclick="indexFiles()">Index All Files</button>
+  <!-- ② LLM Keys ─────────────────────────────────── -->
+  <div class="step" id="step2" style="display:none">
+    <div class="step-hd"><div class="step-num">2</div><h2>LLM Keys</h2></div>
+    <div id="keysSection"></div>
+  </div>
+
+  <!-- ③ Files Folder ──────────────────────────────── -->
+  <div class="step" id="step3" style="display:none">
+    <div class="step-hd"><div class="step-num">3</div><h2>Files</h2></div>
+    <div class="card">
+      <div class="card-row">
+        <div class="icon">📁</div>
+        <div class="info">
+          <h3>Files folder</h3>
+          <p id="folderPath" style="color:#aeaeb2">Not configured</p>
+        </div>
+        <button class="btn btn-ghost" onclick="toggleFolderEdit()">Change</button>
+      </div>
+      <div class="tab-body hidden" id="folderEdit">
+        <div class="row">
+          <input type="text" id="folderInput" placeholder="/Users/you/project-files/">
+          <button class="btn btn-primary" onclick="saveFolder()">Save</button>
+        </div>
+        <div class="msg" id="folderMsg"></div>
+      </div>
     </div>
-    <div id="indexList" class="file-list" style="padding-top:0"></div>
+    <div class="card">
+      <div class="flist" id="fileList"><p class="fempty">Set a folder above to see files.</p></div>
+    </div>
+  </div>
+
+  <!-- ④ Embeddings ────────────────────────────────── -->
+  <div class="step" id="step4" style="display:none">
+    <div class="step-hd"><div class="step-num">4</div><h2>Embeddings</h2></div>
+    <div class="card">
+      <div class="card-row">
+        <div class="icon">🔍</div>
+        <div class="info">
+          <h3>Embedding model</h3>
+          <p id="embedInfo" style="color:#aeaeb2">Loading…</p>
+        </div>
+        <button class="btn btn-ghost" onclick="toggleEmbedEdit()">Configure</button>
+      </div>
+      <div class="tab-body hidden" id="embedEdit">
+        <div class="row">
+          <select id="embedProvider" onchange="updateEmbedPlaceholder()">
+            <option value="openai">OpenAI</option>
+            <option value="ollama">Ollama</option>
+          </select>
+          <input type="text" id="embedModel" placeholder="text-embedding-3-small">
+          <button class="btn btn-primary" onclick="saveEmbed()">Save</button>
+        </div>
+        <div class="msg" id="embedMsg"></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="ibar">
+        <span id="indexSummary">No files indexed yet</span>
+        <button class="btn btn-primary" id="indexBtn" onclick="indexFiles()">Index All Files</button>
+      </div>
+      <div class="flist" id="indexList"></div>
+    </div>
+  </div>
+
+  <!-- ⑤ Run ───────────────────────────────────────── -->
+  <div class="step" id="step5" style="display:none">
+    <div class="step-hd"><div class="step-num">5</div><h2>Run</h2></div>
+    <div class="card" style="padding:16px 18px">
+      <div id="userInputWrap" style="display:none;margin-bottom:12px">
+        <p style="font-size:.8rem;color:#6e6e73;margin-bottom:6px">Your input (injected as <code>{{user_input}}</code>)</p>
+        <textarea id="userInput" placeholder="Enter your text here…"></textarea>
+      </div>
+      <button class="btn-run" id="runBtn" onclick="runWorkflow()">Run Workflow</button>
+      <div class="msg" id="runMsg" style="margin-top:8px"></div>
+    </div>
+
+    <div id="results" style="display:none;margin-top:16px">
+      <div class="step-hd" style="margin-bottom:8px">
+        <div class="step-num" id="resultStatus" style="background:#30d158">✓</div>
+        <h2 id="resultTitle">Results</h2>
+      </div>
+      <div id="resultNodes"></div>
+    </div>
   </div>
 
 </main>
-<footer>API keys are encrypted on this machine and never leave your device.</footer>
 
 <script>
-/* ── LLM Keys ────────────────────────────────────────────────── */
-const PROVIDERS = {
-  openai: { label:"OpenAI",            icon:"⚡", ph:"sk-...",                  type:"password" },
-  claude: { label:"Anthropic (Claude)", icon:"🧠", ph:"sk-ant-...",             type:"password" },
-  gemini: { label:"Google Gemini",      icon:"✨", ph:"AIza...",               type:"password" },
-  ollama: { label:"Ollama Host",        icon:"🦙", ph:"http://localhost:11434", type:"text"     },
-};
+/* ── State ─────────────────────────────────────────── */
+let wfInfo = null;
+const PROVIDER_LABELS = { openai:"OpenAI", claude:"Anthropic (Claude)", gemini:"Google Gemini", ollama:"Ollama" };
+const PROVIDER_ICONS  = { openai:"⚡", claude:"🧠", gemini:"✨", ollama:"🦙" };
+const PROVIDER_PH     = { openai:"sk-...", claude:"sk-ant-...", gemini:"AIza...", ollama:"http://localhost:11434" };
+const EMBED_DEFAULTS  = { openai:"text-embedding-3-small", ollama:"nomic-embed-text" };
 
-function badgeHtml(info) {
-  if (!info.configured)          return '<span class="badge miss">Not set</span>';
-  if (info.source === "env")     return '<span class="badge env">Via env var</span>';
-  return '<span class="badge ok">Configured ✓</span>';
+/* ── Tabs (upload / path) ──────────────────────────── */
+function switchTab(name) {
+  document.querySelectorAll(".tab").forEach((t,i) => t.classList.toggle("active", ["upload","path"][i] === name));
+  document.getElementById("tab-upload").classList.toggle("hidden", name !== "upload");
+  document.getElementById("tab-path").classList.toggle("hidden", name !== "path");
 }
 
+/* ── Workflow loading ──────────────────────────────── */
+async function uploadWorkflow(input) {
+  const file = input.files[0];
+  if (!file) return;
+  document.getElementById("uploadName").textContent = file.name;
+  const fd = new FormData();
+  fd.append("file", file);
+  const r = await fetch("/workflow/upload", { method: "POST", body: fd });
+  const d = await r.json();
+  if (r.ok) { showMsg("uploadMsg", "Loaded: " + d.title, false); await refreshAll(); }
+  else showMsg("uploadMsg", d.detail || "Error", true);
+}
+
+async function loadFromPath() {
+  const path = document.getElementById("pathInput").value.trim();
+  if (!path) { showMsg("pathMsg", "Enter a path.", true); return; }
+  const r = await fetch("/workflow/path", {
+    method: "POST", headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ path }),
+  });
+  const d = await r.json();
+  if (r.ok) { showMsg("pathMsg", "Loaded: " + d.title, false); await refreshAll(); }
+  else showMsg("pathMsg", d.detail || "Error", true);
+}
+
+async function clearWorkflow() {
+  await fetch("/workflow/clear", { method: "DELETE" });
+  wfInfo = null;
+  document.getElementById("wfCard").style.display = "none";
+  document.getElementById("loadCard").style.display = "";
+  ["step2","step3","step4","step5"].forEach(id => document.getElementById(id).style.display = "none");
+  document.getElementById("results").style.display = "none";
+}
+
+/* ── Render workflow info ──────────────────────────── */
+function renderWorkflow(info) {
+  wfInfo = info;
+
+  // Meta
+  document.getElementById("wfMeta").innerHTML =
+    `<h3>${esc(info.title)}</h3><p>${esc(info.description || "")}</p>`;
+
+  // Steps
+  const stepsEl = document.getElementById("wfSteps");
+  if (info.steps.length) {
+    stepsEl.innerHTML = info.steps.map(s => `
+      <div class="wf-step">
+        <div>
+          <div class="wf-step-label">${esc(s.label)}</div>
+          <div class="wf-step-model">${esc(s.provider)} / ${esc(s.model)}</div>
+          ${s.prompt ? `<div class="wf-step-prompt">${esc(truncate(s.prompt,120))}</div>` : ""}
+        </div>
+      </div>`).join("");
+  } else {
+    stepsEl.innerHTML = "";
+  }
+
+  // What the workflow needs
+  const needsEl = document.getElementById("wfNeeds");
+  const tags = [];
+  info.required_providers.forEach(p =>
+    tags.push(`<span class="badge miss">${esc(PROVIDER_LABELS[p]||p)}</span>`));
+  if (info.needs_files)      tags.push('<span class="badge miss">📁 Files needed</span>');
+  if (info.needs_embeddings) tags.push('<span class="badge miss">🔍 Embeddings needed</span>');
+  if (info.has_user_input)   tags.push('<span class="badge warn">✏️ Asks for input</span>');
+  needsEl.innerHTML = tags.join("");
+
+  document.getElementById("loadCard").style.display = "none";
+  document.getElementById("wfCard").style.display = "";
+}
+
+/* ── LLM Keys ──────────────────────────────────────── */
 function renderKeys(status) {
-  const c = document.getElementById("keysSection");
-  c.innerHTML = "";
-  for (const [id, meta] of Object.entries(PROVIDERS)) {
+  const required = wfInfo ? wfInfo.required_providers : [];
+  const el = document.getElementById("keysSection");
+  el.innerHTML = "";
+
+  // Show required providers first, then the rest dimmed
+  const all = ["openai","claude","gemini","ollama"];
+  const ordered = [...required, ...all.filter(p => !required.includes(p))];
+
+  ordered.forEach(id => {
     const info = status[id] || { configured:false, source:null };
+    const isRequired = required.includes(id);
     const card = document.createElement("div");
     card.className = "card";
+    card.style.opacity = isRequired ? "1" : "0.5";
+    let badge = info.configured
+      ? (info.source==="env"
+          ? '<span class="badge warn">Via env</span>'
+          : '<span class="badge ok">Configured ✓</span>')
+      : (isRequired
+          ? '<span class="badge err">Required — not set</span>'
+          : '<span class="badge miss">Not set</span>');
     card.innerHTML = `
-      <div class="card-header">
-        <div class="icon">${meta.icon}</div>
-        <div class="info"><h3>${meta.label}</h3>${badgeHtml(info)}</div>
-        <button class="btn btn-edit" onclick="toggleKey('${id}')">${info.configured?"Update":"Add"}</button>
+      <div class="card-row">
+        <div class="icon">${PROVIDER_ICONS[id]||"🔑"}</div>
+        <div class="info"><h3>${PROVIDER_LABELS[id]||id}</h3>${badge}</div>
+        <button class="btn btn-ghost" onclick="toggleKey('${id}')">${info.configured?"Update":"Add"}</button>
       </div>
-      <div class="edit-row" id="edit-${id}">
-        <input type="${meta.type}" id="input-${id}" placeholder="${meta.ph}" autocomplete="off"/>
-        <button class="btn btn-save" onclick="saveKey('${id}')">Save</button>
-        ${info.configured?`<button class="btn btn-del" onclick="deleteKey('${id}')">Remove</button>`:""}
-        <div class="msg" id="msg-${id}"></div>
+      <div class="tab-body hidden" id="key-${id}">
+        <div class="row">
+          <input type="password" id="kinput-${id}" placeholder="${PROVIDER_PH[id]||"key..."}" autocomplete="off">
+          <button class="btn btn-primary" onclick="saveKey('${id}')">Save</button>
+          ${info.configured?`<button class="btn btn-danger" onclick="deleteKey('${id}')">Remove</button>`:""}
+        </div>
+        <div class="msg" id="kmsg-${id}"></div>
       </div>`;
-    c.appendChild(card);
-  }
+    el.appendChild(card);
+  });
 }
 
 function toggleKey(id) {
-  const row = document.getElementById("edit-"+id);
-  const open = row.classList.contains("open");
-  document.querySelectorAll(".edit-row.open").forEach(r=>r.classList.remove("open"));
-  if (!open) { row.classList.add("open"); document.getElementById("input-"+id).focus(); }
-}
-
-function setMsg(id, text, isErr) {
-  const el = document.getElementById("msg-"+id);
-  el.textContent = text; el.className = "msg "+(isErr?"err":"ok");
-  if (!isErr) setTimeout(()=>{ el.textContent=""; refreshKeys(); }, 1400);
+  const el = document.getElementById("key-"+id);
+  el.classList.toggle("hidden");
+  if (!el.classList.contains("hidden")) document.getElementById("kinput-"+id).focus();
 }
 
 async function saveKey(p) {
-  const key = document.getElementById("input-"+p).value.trim();
-  if (!key) { setMsg(p,"Enter a value first.",true); return; }
-  const r = await fetch("/keys",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:p,key})});
-  r.ok ? setMsg(p,"Saved!",false) : setMsg(p,"Error saving.",true);
+  const val = document.getElementById("kinput-"+p).value.trim();
+  if (!val) { showMsg("kmsg-"+p,"Enter a value.",true); return; }
+  const r = await fetch("/keys",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:p,key:val})});
+  r.ok ? showMsg("kmsg-"+p,"Saved!",false) : showMsg("kmsg-"+p,"Error.",true);
+  if (r.ok) setTimeout(refreshKeys, 1200);
 }
 
 async function deleteKey(p) {
-  const r = await fetch("/keys/"+p,{method:"DELETE"});
-  r.ok ? setMsg(p,"Removed.",false) : setMsg(p,"Error.",true);
+  await fetch("/keys/"+p,{method:"DELETE"});
+  setTimeout(refreshKeys, 400);
 }
 
 async function refreshKeys() {
@@ -477,14 +743,14 @@ async function refreshKeys() {
   renderKeys(s);
 }
 
-/* ── Files Folder ───────────────────────────────────────────── */
+/* ── Files Folder ─────────────────────────────────── */
 async function refreshFolder() {
   const cfg = await fetch("/config").then(r=>r.json());
   const el = document.getElementById("folderPath");
   if (cfg.files_folder) {
     el.textContent = cfg.files_folder;
     el.style.color = cfg.files_folder_valid ? "#1d1d1f" : "#d12f2f";
-    if (!cfg.files_folder_valid) el.textContent += " ⚠ path not found";
+    if (!cfg.files_folder_valid) el.textContent += " ⚠ not found";
   } else {
     el.textContent = "Not configured";
     el.style.color = "#aeaeb2";
@@ -492,118 +758,216 @@ async function refreshFolder() {
   refreshFileList();
 }
 
-function toggleFolder() {
-  const row = document.getElementById("folderEditRow");
-  row.classList.contains("open") ? row.classList.remove("open") : (row.classList.add("open"), document.getElementById("folderInput").focus());
+function toggleFolderEdit() {
+  document.getElementById("folderEdit").classList.toggle("hidden");
 }
 
 async function saveFolder() {
-  const path = document.getElementById("folderInput").value.trim();
-  if (!path) { folderMsg("Enter a folder path.",true); return; }
-  const r = await fetch("/keys",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:"files_folder",key:path})});
+  const val = document.getElementById("folderInput").value.trim();
+  if (!val) { showMsg("folderMsg","Enter a path.",true); return; }
+  const r = await fetch("/keys",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:"files_folder",key:val})});
   if (r.ok) {
-    folderMsg("Saved!",false);
-    setTimeout(()=>{ document.getElementById("folderEditRow").classList.remove("open"); document.getElementById("folderMsg").textContent=""; refreshFolder(); }, 900);
-  } else folderMsg("Error.",true);
+    showMsg("folderMsg","Saved!",false);
+    setTimeout(() => { document.getElementById("folderEdit").classList.add("hidden"); refreshFolder(); }, 800);
+  } else showMsg("folderMsg","Error.",true);
 }
-
-function folderMsg(t,e){ const el=document.getElementById("folderMsg"); el.textContent=t; el.className="msg "+(e?"err":"ok"); }
 
 async function refreshFileList() {
-  const data = await fetch("/files").then(r=>r.json());
+  const d = await fetch("/files").then(r=>r.json());
   const el = document.getElementById("fileList");
-  if (!data.folder)  { el.innerHTML='<p class="file-empty">Set a files folder above.</p>'; return; }
-  if (!data.valid)   { el.innerHTML='<p class="file-empty" style="color:#d12f2f">Folder path not found on disk.</p>'; return; }
-  if (!data.files.length) { el.innerHTML='<p class="file-empty">Folder is empty.</p>'; return; }
-  el.innerHTML = data.files.map(f=>`
-    <div class="file-item">
-      <span class="file-name">${f.name}</span>
-      <span class="file-meta">${fmt(f.size)}</span>
+  const required = wfInfo ? wfInfo.required_files : [];
+
+  if (!d.folder) { el.innerHTML='<p class="fempty">Set a folder above.</p>'; return; }
+  if (!d.valid)  { el.innerHTML='<p class="fempty" style="color:#d12f2f">Folder not found.</p>'; return; }
+  if (!d.files.length) { el.innerHTML='<p class="fempty">Folder is empty.</p>'; return; }
+
+  const present = new Set(d.files.map(f=>f.name));
+  const missing = required.filter(n=>!present.has(n));
+
+  let html = d.files.map(f => {
+    const needed = required.includes(f.name);
+    return `<div class="frow">
+      <span class="fname">${esc(f.name)}</span>
+      <span class="fmeta">${fmt(f.size)}${needed?' <span class="badge ok">needed ✓</span>':''}</span>
+    </div>`;
+  }).join("");
+
+  if (missing.length) {
+    html += missing.map(n=>`<div class="frow">
+      <span class="fname" style="color:#d12f2f">${esc(n)}</span>
+      <span class="fmeta"><span class="badge err">missing</span></span>
     </div>`).join("");
+  }
+  el.innerHTML = html;
 }
 
-function fmt(b){ return b<1024?b+" B":b<1048576?(b/1024).toFixed(1)+" KB":(b/1048576).toFixed(1)+" MB"; }
-
-/* ── Embeddings ─────────────────────────────────────────────── */
-const EMBED_DEFAULTS = { openai:"text-embedding-3-small", ollama:"nomic-embed-text" };
-
+/* ── Embeddings ───────────────────────────────────── */
 function updateEmbedPlaceholder() {
   const p = document.getElementById("embedProvider").value;
-  document.getElementById("embedModel").placeholder = EMBED_DEFAULTS[p] || "model-name";
+  document.getElementById("embedModel").placeholder = EMBED_DEFAULTS[p]||"model-name";
+}
+
+function toggleEmbedEdit() {
+  document.getElementById("embedEdit").classList.toggle("hidden");
 }
 
 async function refreshEmbed() {
   const cfg = await fetch("/config").then(r=>r.json());
-  document.getElementById("embedInfo").textContent = `${cfg.embed_provider} / ${cfg.embed_model}`;
+  document.getElementById("embedInfo").textContent = cfg.embed_provider+" / "+cfg.embed_model;
   document.getElementById("embedInfo").style.color = "#1d1d1f";
   document.getElementById("embedProvider").value = cfg.embed_provider;
   document.getElementById("embedModel").value    = cfg.embed_model;
-  updateEmbedPlaceholder();
   refreshIndexStatus();
 }
 
-function toggleEmbed() {
-  const row = document.getElementById("embedEditRow");
-  row.classList.contains("open") ? row.classList.remove("open") : (row.classList.add("open"), document.getElementById("embedModel").focus());
-}
-
 async function saveEmbed() {
-  const provider = document.getElementById("embedProvider").value;
-  const model    = document.getElementById("embedModel").value.trim() || EMBED_DEFAULTS[provider];
-  await fetch("/keys",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:"embed_provider",key:provider})});
-  await fetch("/keys",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:"embed_model",key:model})});
-  embedMsg("Saved! Re-index files to apply the new model.",false);
-  setTimeout(()=>{ document.getElementById("embedEditRow").classList.remove("open"); document.getElementById("embedMsg").textContent=""; refreshEmbed(); },2000);
+  const p = document.getElementById("embedProvider").value;
+  const m = document.getElementById("embedModel").value.trim()||EMBED_DEFAULTS[p];
+  await fetch("/keys",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:"embed_provider",key:p})});
+  await fetch("/keys",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:"embed_model",key:m})});
+  showMsg("embedMsg","Saved! Re-index to apply.",false);
+  setTimeout(()=>{ document.getElementById("embedEdit").classList.add("hidden"); refreshEmbed(); },1500);
 }
 
-function embedMsg(t,e){ const el=document.getElementById("embedMsg"); el.textContent=t; el.className="msg "+(e?"err":"ok"); }
-
-/* ── Index ──────────────────────────────────────────────────── */
 async function indexFiles() {
   const btn = document.getElementById("indexBtn");
   btn.disabled=true; btn.textContent="Indexing…";
   try {
     const r    = await fetch("/index",{method:"POST"});
     const data = await r.json();
-    if (data.error) { alert("Error: "+data.error); }
-    else {
-      const ok  = data.indexed.length;
-      const bad = data.failed.length;
-      alert(`Done! ${ok} file(s) indexed (${data.total_chunks} chunks total)${bad?", "+bad+" failed":""}.`);
-    }
+    if (data.error) alert("Error: "+data.error);
+    else alert(`Done! ${data.indexed.length} file(s), ${data.total_chunks} chunks.${data.failed.length?" "+data.failed.length+" failed.":""}`);
     refreshIndexStatus();
-  } catch(e) { alert("Request failed: "+e); }
+  } catch(e){ alert("Request failed."); }
   finally { btn.disabled=false; btn.textContent="Index All Files"; }
 }
 
 async function refreshIndexStatus() {
-  const data = await fetch("/index/status").then(r=>r.json());
-  const entries = Object.entries(data);
+  const d = await fetch("/index/status").then(r=>r.json());
+  const entries = Object.entries(d);
   document.getElementById("indexSummary").textContent =
-    entries.length ? `${entries.length} file(s) indexed in ChromaDB` : "No files indexed yet";
-
+    entries.length ? entries.length+" file(s) indexed in ChromaDB" : "No files indexed yet";
   const el = document.getElementById("indexList");
-  if (!entries.length) {
-    el.innerHTML='<p class="file-empty">Click "Index All Files" to enable semantic search.</p>';
+  el.innerHTML = entries.length
+    ? entries.map(([n,i])=>`<div class="frow"><span class="fname">${esc(n)}</span><span class="fmeta">${i.chunks} chunks · ${i.model}</span></div>`).join("")
+    : "";
+}
+
+/* ── Run ──────────────────────────────────────────── */
+async function runWorkflow() {
+  const btn = document.getElementById("runBtn");
+  btn.disabled=true; btn.textContent="Running…";
+  document.getElementById("runMsg").textContent="";
+  document.getElementById("results").style.display="none";
+
+  const body = {};
+  const uiWrap = document.getElementById("userInputWrap");
+  if (uiWrap.style.display !== "none") {
+    body.user_input = document.getElementById("userInput").value;
+  }
+
+  try {
+    const r    = await fetch("/run",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    const data = await r.json();
+    if (data.error) { showMsg("runMsg", data.error, true); return; }
+    renderResults(data);
+  } catch(e) { showMsg("runMsg","Request failed: "+e, true); }
+  finally { btn.disabled=false; btn.textContent="Run Workflow"; }
+}
+
+function renderResults(data) {
+  const ok = data.status === "completed";
+  document.getElementById("resultStatus").textContent = ok ? "✓" : "✗";
+  document.getElementById("resultStatus").style.background = ok ? "#30d158" : "#ff453a";
+  document.getElementById("resultTitle").textContent = ok ? "Completed" : "Failed";
+
+  const nodes = data.node_results || {};
+  const el = document.getElementById("resultNodes");
+  el.innerHTML = Object.entries(nodes).map(([id,n]) => {
+    const status = n.status;
+    const output = n.output || n.error || "";
+    const label  = n.label || id;
+    const type   = n.type  || "";
+    if (status === "skipped") return "";
+    const badge = status === "completed"
+      ? '<span class="badge ok">✓ done</span>'
+      : status === "failed"
+      ? '<span class="badge err">✗ failed</span>'
+      : '<span class="badge miss">skipped</span>';
+
+    return `<div class="result-card">
+      <div class="result-hd" onclick="toggleResult('${id}')">
+        <span class="result-type">${esc(type)}</span>
+        <span class="result-label">${esc(label)}</span>
+        ${badge}
+        <span style="color:#aeaeb2;font-size:.8rem">▾</span>
+      </div>
+      <div class="result-body" id="rb-${id}">
+        ${output
+          ? `<pre class="result-out ${status==="failed"?"result-err":""}">${esc(output)}</pre>`
+          : `<p class="result-skip">No output</p>`}
+      </div>
+    </div>`;
+  }).join("");
+
+  document.getElementById("results").style.display = "";
+  // Auto-open the last completed node
+  const ids = Object.keys(nodes);
+  if (ids.length) toggleResult(ids[ids.length-1]);
+}
+
+function toggleResult(id) {
+  document.getElementById("rb-"+id)?.classList.toggle("open");
+}
+
+/* ── Full refresh ─────────────────────────────────── */
+async function refreshAll() {
+  const info = await fetch("/workflow/info").then(r=>r.json());
+  if (!info || !info.title) {
+    // No workflow loaded
+    document.getElementById("wfCard").style.display = "none";
+    document.getElementById("loadCard").style.display = "";
+    ["step2","step3","step4","step5"].forEach(id=>document.getElementById(id).style.display="none");
     return;
   }
-  el.innerHTML = entries.map(([name,info])=>`
-    <div class="file-item">
-      <span class="file-name">${name}</span>
-      <span class="file-meta">${info.chunks} chunks · ${info.provider}/${info.model}</span>
-    </div>`).join("");
+
+  renderWorkflow(info);
+
+  document.getElementById("step2").style.display = "";
+  await refreshKeys();
+
+  if (info.needs_files) {
+    document.getElementById("step3").style.display = "";
+    await refreshFolder();
+  }
+
+  if (info.needs_embeddings) {
+    document.getElementById("step4").style.display = "";
+    await refreshEmbed();
+  }
+
+  // Run section
+  document.getElementById("step5").style.display = "";
+  document.getElementById("userInputWrap").style.display = info.has_user_input ? "" : "none";
 }
 
-/* ── Init ───────────────────────────────────────────────────── */
-async function checkPing() {
-  try { const r=await fetch("/ping"); document.getElementById("pingDot").style.background=r.ok?"#30d158":"#ff453a"; }
-  catch { document.getElementById("pingDot").style.background="#ff453a"; }
+/* ── Helpers ──────────────────────────────────────── */
+function esc(s){ const d=document.createElement("div"); d.textContent=String(s||""); return d.innerHTML; }
+function fmt(b){ return b<1024?b+" B":b<1048576?(b/1024).toFixed(1)+" KB":(b/1048576).toFixed(1)+" MB"; }
+function truncate(s,n){ return s.length>n?s.slice(0,n)+"…":s; }
+function showMsg(id,text,isErr){
+  const el=document.getElementById(id);
+  if(!el)return; el.textContent=text; el.className="msg "+(isErr?"err":"ok");
 }
 
+async function checkPing(){
+  try{ const r=await fetch("/ping"); document.getElementById("pingDot").style.background=r.ok?"#30d158":"#ff453a"; }
+  catch{ document.getElementById("pingDot").style.background="#ff453a"; }
+}
+
+/* ── Boot ─────────────────────────────────────────── */
 checkPing();
-refreshKeys();
-refreshFolder();
-refreshEmbed();
+refreshAll();
 </script>
 </body>
 </html>"""
