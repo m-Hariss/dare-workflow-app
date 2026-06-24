@@ -253,6 +253,43 @@ class LLMClient:
         }
 
     # ------------------------------------------------------------------
+    # Embeddings (separate from chat completions)
+    # ------------------------------------------------------------------
+
+    def embed(self, text: str, provider: str, model: str) -> list[float]:
+        """Return a float embedding vector for text using the given provider/model."""
+        provider = provider.lower()
+        if provider == "openai":
+            return self._openai_embed(text, model)
+        if provider == "ollama":
+            return self._ollama_embed(text, model)
+        raise ValueError(f"Unsupported embedding provider: {provider!r}. Use 'openai' or 'ollama'.")
+
+    def _openai_embed(self, text: str, model: str) -> list[float]:
+        key = self._api_key("openai")
+        if not key:
+            raise RuntimeError("No OpenAI API key configured for embeddings.")
+        resp = self._post(
+            f"{OPENAI_DEFAULT_BASE}/embeddings",
+            json={"input": text, "model": model},
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        )
+        if not resp.ok:
+            self._raise(resp, model, f"{OPENAI_DEFAULT_BASE}/embeddings")
+        return resp.json()["data"][0]["embedding"]
+
+    def _ollama_embed(self, text: str, model: str) -> list[float]:
+        url = f"{self.ollama_host.rstrip('/')}/api/embeddings"
+        resp = self._post(
+            url,
+            json={"model": model, "prompt": text},
+            headers={"Content-Type": "application/json"},
+        )
+        if not resp.ok:
+            self._raise(resp, model, url)
+        return resp.json()["embedding"]
+
+    # ------------------------------------------------------------------
     # Llama (Ollama, local — no web search, no API key)
     # ------------------------------------------------------------------
 

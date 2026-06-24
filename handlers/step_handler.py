@@ -6,27 +6,31 @@ from prompts import build_step_message
 class StepHandler(BaseHandler):
     def execute(self, node, context, services, state) -> dict:
         data = node.get("data", {})
-        rag = data.get("rag", {})
+        rag  = data.get("rag", {})
 
-        # Step-level files (separate from File nodes).
         extra_files = []
-        for f in rag.get("contentFiles", []):
-            content = services.dare.get_file_content(f["fileId"])
-            extra_files.append(f"From {f.get('name')}:\n{content}")
 
+        # Inline content files attached directly to this step.
+        for f in rag.get("contentFiles", []):
+            name = f.get("name") or str(f.get("fileId", "unknown"))
+            content = services.file_store.get_content(name)
+            extra_files.append(f"From {name}:\n{content}")
+
+        # Embedding-based retrieval for files attached to this step.
         embedding_files = rag.get("embeddingFiles", [])
         if embedding_files:
             query = data.get("textInput") or (context[-1]["output"] if context else "")
-            chunks = services.dare.retrieval_query(
+            file_names = [f.get("name") or str(f.get("fileId", "unknown")) for f in embedding_files]
+            chunks = services.embed.search(
                 query=query,
-                file_ids=[f["fileId"] for f in embedding_files],
                 top_k=rag.get("maxContextSnippets", 4),
-                similarity_threshold=rag.get("documentSimilarityThreshold", 0.5),
+                threshold=rag.get("documentSimilarityThreshold", 0.5),
+                filenames=file_names,
             )
             for c in chunks:
-                extra_files.append(f"From {c['file_name']}:\n{c['text']}")
+                extra_files.append(f"From {c['filename']} (score {c['score']:.2f}):\n{c['text']}")
 
-        prompt = data.get("prompt") or {}
+        prompt  = data.get("prompt") or {}
         message = build_step_message(
             instructions=prompt.get("content", ""),
             context=context if data.get("usePreviousContext", True) else [],
