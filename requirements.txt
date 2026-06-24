@@ -4,3 +4,4 @@ fastsyftbox
 pydantic
 requests
 python-dotenv
+cryptography
