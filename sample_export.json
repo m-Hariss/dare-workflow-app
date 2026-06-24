@@ -1,0 +1,140 @@
+{
+  "schemaVersion": "v1",
+  "workflowId": 1,
+  "title": "Start Workflow",
+  "description": "",
+  "mode": "sequential",
+  "entryNode": "5S8Ff-kY358OdbrO77j0k",
+  "nodes": [
+    {
+      "id": "07nkuaSiBYtd1bKGm3uSh",
+      "type": "step",
+      "data": {
+        "label": "Summarization Part",
+        "prompt": {
+          "id": 1,
+          "title": "Summarize File",
+          "content": "Read the uploaded file and create a short summary with key points."
+        },
+        "agentId": null,
+        "llm": {
+          "id": 23,
+          "name": "GPT-5.5",
+          "provider": "openai",
+          "identifier": "gpt-5.5",
+          "baseUrl": null,
+          "supportsTemperature": false
+        },
+        "generation": { "maxTokens": 2048, "temperature": 0.7 },
+        "textInput": "",
+        "usePreviousContext": true,
+        "enableWebSearch": false,
+        "rag": {
+          "contentFiles": [],
+          "embeddingFiles": [],
+          "tags": [],
+          "maxContextSnippets": 4,
+          "documentSimilarityThreshold": 0.2,
+          "usePreviousStepFiles": false,
+          "usePreviousStepEmbeddings": false
+        }
+      }
+    },
+    { "id": "5Kro4K3CpNEklC2FPPP5_", "type": "output", "data": { "label": "No" } },
+    {
+      "id": "5S8Ff-kY358OdbrO77j0k",
+      "type": "start",
+      "data": { "title": "Start Workflow", "description": "", "mode": "sequential" }
+    },
+    {
+      "id": "B01eFeo2MXT4zdrHhQsql",
+      "type": "file",
+      "data": {
+        "label": "Add your File",
+        "files": [{ "fileId": 2, "name": "Thesis-FinalReport-Specbot.pdf" }],
+        "retrievalMode": "content",
+        "similarityThreshold": 0.5,
+        "maxResults": 10,
+        "querySource": "previous_step",
+        "textInput": "",
+        "includeMetadata": true
+      }
+    },
+    {
+      "id": "aHAVBP0F3Er87eMFmVIRq",
+      "type": "router",
+      "data": {
+        "label": "Generated or Not",
+        "prompt": {
+          "id": 2,
+          "title": "Summary Output",
+          "content": "if summary generated correct then you have to choose yes step else go towards the no one."
+        },
+        "llm": {
+          "id": 23,
+          "name": "GPT-5.5",
+          "provider": "openai",
+          "identifier": "gpt-5.5",
+          "baseUrl": null,
+          "supportsTemperature": false
+        },
+        "routes": [
+          { "name": "yes", "description": "First route" },
+          { "name": "no", "description": "Second route" }
+        ],
+        "requireHumanValidation": false,
+        "textInput": "Has action items?"
+      }
+    },
+    { "id": "irGCSS0HeEiQceZB2cqLX", "type": "output", "data": { "label": "Yes" } }
+  ],
+  "edges": [
+    {
+      "id": "xy-edge__07nkuaSiBYtd1bKGm3uShdefault-aHAVBP0F3Er87eMFmVIRqinput",
+      "source": "07nkuaSiBYtd1bKGm3uSh",
+      "target": "aHAVBP0F3Er87eMFmVIRq",
+      "sourceHandle": "default",
+      "targetHandle": "input"
+    },
+    {
+      "id": "xy-edge__5S8Ff-kY358OdbrO77j0koutput-1-B01eFeo2MXT4zdrHhQsqlinput-1",
+      "source": "5S8Ff-kY358OdbrO77j0k",
+      "target": "B01eFeo2MXT4zdrHhQsql",
+      "sourceHandle": "output-1",
+      "targetHandle": "input-1"
+    },
+    {
+      "id": "xy-edge__B01eFeo2MXT4zdrHhQsqldefault-07nkuaSiBYtd1bKGm3uShinput-1",
+      "source": "B01eFeo2MXT4zdrHhQsql",
+      "target": "07nkuaSiBYtd1bKGm3uSh",
+      "sourceHandle": "default",
+      "targetHandle": "input-1"
+    },
+    {
+      "id": "xy-edge__aHAVBP0F3Er87eMFmVIRqoutput-no-5Kro4K3CpNEklC2FPPP5_",
+      "source": "aHAVBP0F3Er87eMFmVIRq",
+      "target": "5Kro4K3CpNEklC2FPPP5_",
+      "sourceHandle": "output-no",
+      "targetHandle": null
+    },
+    {
+      "id": "xy-edge__aHAVBP0F3Er87eMFmVIRqoutput-yes-irGCSS0HeEiQceZB2cqLX",
+      "source": "aHAVBP0F3Er87eMFmVIRq",
+      "target": "irGCSS0HeEiQceZB2cqLX",
+      "sourceHandle": "output-yes",
+      "targetHandle": null
+    }
+  ],
+  "llmConfig": {
+    "gpt-5.5": {
+      "id": 23,
+      "name": "GPT-5.5",
+      "provider": "openai",
+      "identifier": "gpt-5.5",
+      "baseUrl": null,
+      "supportsTemperature": false
+    }
+  },
+  "files": [{ "fileId": 2, "name": "Thesis-FinalReport-Specbot.pdf" }],
+  "ragConfig": { "defaultTopK": 10, "defaultSimilarityThreshold": 0.5 }
+}
