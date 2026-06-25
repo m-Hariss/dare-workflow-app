@@ -9,6 +9,8 @@ import json
 import logging
 from pathlib import Path
 
+from workflow_loader import normalize_export
+
 logger = logging.getLogger(__name__)
 
 # Maps workflow provider names → key_store names
@@ -62,14 +64,33 @@ class WorkflowStore:
         return self._parse(payload) if payload else None
 
     def _parse(self, payload: dict) -> dict:
+        # Normalise to the canonical shape so v1 and v2 parse identically.
+        # An unsupported version shouldn't crash the dashboard — fall back to raw.
+        try:
+            payload = normalize_export(payload)
+        except ValueError as e:
+            logger.warning("Could not normalise workflow for info: %s", e)
+
         nodes = payload.get("nodes", [])
 
         required_providers = set()
-        required_files     = []
+        slots              = {}   # id -> {id, label, usage}; dedupes shared inputs
         needs_files        = False
         needs_embeddings   = False
         has_user_input     = False
         steps              = []
+
+        def add_slot(f, default_usage):
+            """Register a file slot keyed by its stable id (node id for v2,
+            filename for v1). label is what the user sees; usage drives embedding."""
+            fid = f.get("name") or str(f.get("fileId") or f.get("file_id", ""))
+            if not fid:
+                return
+            slots.setdefault(fid, {
+                "id":    fid,
+                "label": f.get("label") or fid,
+                "usage": f.get("usage") or default_usage,
+            })
 
         for node in nodes:
             ntype = node.get("type")
@@ -85,27 +106,19 @@ class WorkflowStore:
 
                 # Detect {{user_input}} in prompt or text input
                 prompt_content = (data.get("prompt") or {}).get("content", "")
-                text_input     = data.get("textInput") or data.get("text_input") or ""
+                text_input     = data.get("textInput") or ""
                 if "{{user_input}}" in prompt_content or "{{user_input}}" in text_input:
                     has_user_input = True
 
-                # RAG files (camelCase + snake_case)
-                rag             = data.get("rag", {})
-                content_files   = rag.get("contentFiles")   or rag.get("content_files",   [])
-                embedding_files = rag.get("embeddingFiles") or rag.get("embedding_files", [])
-
-                for f in content_files:
-                    name = f.get("name") or str(f.get("fileId") or f.get("file_id", ""))
-                    if name:
-                        needs_files = True
-                        required_files.append(name)
-
-                for f in embedding_files:
-                    name = f.get("name") or str(f.get("fileId") or f.get("file_id", ""))
-                    if name:
-                        needs_files      = True
-                        needs_embeddings = True
-                        required_files.append(name)
+                # Files attached directly to this step (canonical rag buckets)
+                rag = data.get("rag", {})
+                for f in rag.get("contentFiles", []):
+                    needs_files = True
+                    add_slot(f, "retrieve")
+                for f in rag.get("embeddingFiles", []):
+                    needs_files      = True
+                    needs_embeddings = True
+                    add_slot(f, "embed_and_retrieve")
 
                 if ntype == "step":
                     steps.append({
@@ -117,13 +130,12 @@ class WorkflowStore:
                     })
 
             elif ntype == "file":
-                mode  = data.get("retrievalMode") or data.get("retrieval_mode", "content")
+                mode = data.get("retrievalMode", "content")
+                embeds = mode in ("embeddings", "both")
                 for f in data.get("files", []):
-                    name = f.get("name") or str(f.get("fileId") or f.get("file_id", ""))
-                    if name:
-                        needs_files = True
-                        required_files.append(name)
-                if mode in ("embeddings", "both"):
+                    needs_files = True
+                    add_slot(f, "embed_and_retrieve" if embeds else "retrieve")
+                if embeds:
                     needs_embeddings = True
 
         return {
@@ -132,7 +144,7 @@ class WorkflowStore:
             "mode":               payload.get("mode", "sequential"),
             "steps":              steps,
             "required_providers": list(required_providers),
-            "required_files":     list(dict.fromkeys(required_files)),
+            "required_files":     list(slots.values()),
             "needs_files":        needs_files,
             "needs_embeddings":   needs_embeddings,
             "has_user_input":     has_user_input,

@@ -13,6 +13,7 @@ from syft_core import Client
 
 from clients.llm_client import LLMClient
 from embedding_pipeline import EmbeddingPipeline
+from file_store import FileStore
 from key_store import KeyStore
 from vector_store import VectorStore
 from workflow_store import WorkflowStore
@@ -78,3 +79,40 @@ def make_embed_pipeline() -> EmbeddingPipeline:
         provider=provider,
         model=model,
     )
+
+
+# ---------------------------------------------------------------------------
+# Slot embedding — chunk+embed an uploaded slot file into ChromaDB under its
+# slot id, which is exactly the filename the file handler searches at run time.
+# ---------------------------------------------------------------------------
+
+def embed_slot(slot_id: str) -> int:
+    """Index the file currently mapped to slot_id. Returns chunk count.
+
+    Raises if no file is mapped, the embedding provider/key is unavailable, or
+    the file can't be read — callers surface that to the user.
+    """
+    store   = FileStore(key_store.get("files_folder"), file_map=load_file_map())
+    content = store.get_content(slot_id)
+    return make_embed_pipeline().index_file(slot_id, content)
+
+
+def remove_slot_embeddings(slot_id: str):
+    """Drop any indexed chunks + status for a slot (best effort)."""
+    try:
+        pipeline = make_embed_pipeline()
+        pipeline._store.delete_by_filename(slot_id)
+        pipeline.remove_status(slot_id)
+    except Exception as e:
+        logger.warning("Could not remove embeddings for slot %s: %s", slot_id, e)
+
+
+def read_index_status() -> dict:
+    """Per-file index status, read straight from disk (no ChromaDB needed)."""
+    p = DATA_DIR / "index_status.json"
+    if p.exists():
+        try:
+            return json.loads(p.read_text())
+        except Exception:
+            return {}
+    return {}

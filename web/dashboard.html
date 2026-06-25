@@ -474,21 +474,26 @@ async function refreshSlots() {
   const slots = await fetch("/files/slots").then(r=>r.json());
   const el = document.getElementById("slotList");
 
-  el.innerHTML = required.map(name => {
-    const slot = slots[name];
+  el.innerHTML = required.map(s => {
+    const id    = s.id;
+    const label = s.label || s.id;
+    const embed = (s.usage || "").indexOf("embed") !== -1;
+    const slot  = slots[id];
     const mapped = slot && slot.exists;
-    const safeId = "slot-" + btoa(name).replace(/[^a-zA-Z0-9]/g,"");
-    return `<div class="frow" id="${safeId}">
-      <span class="fname">${esc(name)}</span>
+    const indexed = mapped && slot.indexed;
+    return `<div class="frow">
+      <span class="fname">${esc(label)}${embed ? ' <span class="fmeta">· will be embedded</span>' : ''}</span>
       <span class="fmeta" style="display:flex;align-items:center;gap:6px">
         ${mapped
           ? `<span class="badge ok">✓ ${esc(slot.filename)}</span>`
           : `<span class="badge err">not uploaded</span>`}
+        ${indexed ? `<span class="badge ok">🔍 ${slot.chunks} chunks</span>`
+                  : (mapped && embed ? `<span class="badge warn">not embedded</span>` : "")}
         <label class="btn btn-ghost" style="font-size:.72rem;padding:4px 10px;cursor:pointer;margin:0">
           ${mapped ? "Replace" : "Upload"}
-          <input type="file" style="display:none" onchange="uploadSlotFile(${JSON.stringify(name)}, this)">
+          <input type="file" style="display:none" onchange="uploadSlotFile(${JSON.stringify(id)}, this)">
         </label>
-        ${mapped ? `<button class="btn btn-danger" style="font-size:.72rem;padding:4px 8px;margin:0" onclick="removeSlot(${JSON.stringify(name)})">×</button>` : ""}
+        ${mapped ? `<button class="btn btn-danger" style="font-size:.72rem;padding:4px 8px;margin:0" onclick="removeSlot(${JSON.stringify(id)})">×</button>` : ""}
       </span>
     </div>`;
   }).join("");
@@ -501,8 +506,13 @@ async function uploadSlotFile(slotName, input) {
   fd.append("slot", slotName);
   fd.append("file", file);
   const r = await fetch("/files/slot", { method: "POST", body: fd });
-  if (r.ok) await refreshSlots();
-  else alert("Upload failed.");
+  if (!r.ok) { alert("Upload failed."); return; }
+  const d = await r.json();
+  if (d.embed_error) {
+    alert("File uploaded, but embedding failed:\n\n" + d.embed_error +
+          "\n\nSet your embedding key (step 4), then re-upload.");
+  }
+  await refreshSlots();
 }
 
 async function removeSlot(slotName) {
