@@ -481,6 +481,8 @@ async function refreshKeys() {
 
 /* ── File Slots ────────────────────────────────────── */
 function slotRowId(id){ return "slot_" + String(id).replace(/[^a-zA-Z0-9]/g,"_"); }
+// Escape a value for use inside a single-quoted JS string in an inline HTML handler.
+function jsAttr(s){ return String(s).replace(/\\/g,"\\\\").replace(/'/g,"\\'"); }
 function slotIsEmbed(id){
   const s = (wfInfo && wfInfo.required_files || []).find(x => x.id === id);
   return s && (s.usage || "").indexOf("embed") !== -1;
@@ -513,9 +515,9 @@ async function refreshSlots() {
         </span>
         <label class="btn btn-ghost" style="font-size:.72rem;padding:4px 10px;cursor:pointer;margin:0">
           ${mapped ? "Replace" : "Upload"}
-          <input type="file" style="display:none" onchange="uploadSlotFile(${JSON.stringify(id)}, this)">
+          <input type="file" style="display:none" onchange="uploadSlotFile('${jsAttr(id)}', this)">
         </label>
-        ${mapped ? `<button class="btn btn-danger" style="font-size:.72rem;padding:4px 8px;margin:0" onclick="removeSlot(${JSON.stringify(id)})">×</button>` : ""}
+        ${mapped ? `<button class="btn btn-danger" style="font-size:.72rem;padding:4px 8px;margin:0" onclick="removeSlot('${jsAttr(id)}')">×</button>` : ""}
       </span>
     </div>`;
   }).join("");
