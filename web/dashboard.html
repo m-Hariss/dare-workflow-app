@@ -632,15 +632,24 @@ async function saveEmbed() {
 
 async function indexFiles() {
   const btn = document.getElementById("indexBtn");
+  const summary = document.getElementById("indexSummary");
   btn.disabled=true; btn.textContent="Indexing…";
+  summary.textContent = "⏳ Indexing files in your files folder… this can take a moment.";
   try {
     const r    = await fetch("/index",{method:"POST"});
     const data = await r.json();
-    if (data.error) alert("Error: "+data.error);
-    else alert(`Done! ${data.indexed.length} file(s), ${data.total_chunks} chunks.${data.failed.length?" "+data.failed.length+" failed.":""}`);
-    refreshIndexStatus();
-  } catch(e){ alert("Request failed."); }
-  finally { btn.disabled=false; btn.textContent="Index All Files"; }
+    if (data.error) {
+      summary.textContent = "⚠ " + data.error;
+      return;
+    }
+    await refreshIndexStatus();
+    const failed = data.failed.length ? ` · ${data.failed.length} failed` : "";
+    summary.textContent = `✓ Indexed ${data.indexed.length} file(s) · ${data.total_chunks} chunks${failed}`;
+  } catch(e){
+    summary.textContent = "✗ Indexing failed or timed out — try again, or use “Open in new tab”.";
+  } finally {
+    btn.disabled=false; btn.textContent="Index All Files";
+  }
 }
 
 async function refreshIndexStatus() {
@@ -655,6 +664,8 @@ async function refreshIndexStatus() {
 }
 
 /* ── Run ──────────────────────────────────────────── */
+function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
+
 async function runWorkflow() {
   const btn = document.getElementById("runBtn");
   btn.disabled=true; btn.textContent="Running…";
@@ -668,12 +679,39 @@ async function runWorkflow() {
   }
 
   try {
+    // Kick off the run — returns immediately with a run_id; we poll for the result.
     const r    = await fetch("/run",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
     const data = await r.json();
-    if (data.error) { showMsg("runMsg", data.error, true); return; }
-    renderResults(data);
+    if (data.error)   { showMsg("runMsg", data.error, true); return; }
+    if (!data.run_id) { renderResults(data); return; }   // (back-compat with a sync response)
+    showMsg("runMsg", "Started… running workflow", false);
+    await pollRun(data.run_id, btn);
   } catch(e) { showMsg("runMsg","Request failed: "+e, true); }
   finally { btn.disabled=false; btn.textContent="Run Workflow"; }
+}
+
+async function pollRun(runId, btn) {
+  while (true) {
+    await sleep(1500);
+    let s;
+    try {
+      s = await fetch("/run/"+encodeURIComponent(runId)).then(r=>r.json());
+    } catch(e) {
+      showMsg("runMsg", "Still running… (waiting for the server)", false);
+      continue;   // transient poll failure — keep waiting
+    }
+    if (s.error && s.status !== "running") { showMsg("runMsg", s.error, true); return; }
+    if (s.progress) {
+      const {done, total} = s.progress;
+      btn.textContent = `Running… ${done}/${total}`;
+      showMsg("runMsg", `Running… step ${done} of ${total}`, false);
+    }
+    if (s.status !== "running") {
+      if (s.result) { document.getElementById("runMsg").textContent=""; renderResults(s.result); }
+      else showMsg("runMsg", s.error || "Run finished with no result.", true);
+      return;
+    }
+  }
 }
 
 function renderResults(data) {

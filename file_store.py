@@ -6,19 +6,28 @@ the runner reads files from it by filename at execution time.
 file_map: maps workflow slot names (the Dare filenames) to actual local paths.
 Slot files take priority over the folder — the folder is a fallback.
 
-Text decoding: UTF-8 for plain text; python-docx for .docx; binary files rejected.
+Text extraction by type:
+  .pdf            → pypdf (text-based PDFs; scanned/image PDFs need OCR — not yet)
+  .docx           → python-docx
+  text formats    → UTF-8 decode (.txt, .md, .csv, .json, .html, code files, …)
+  other binaries  → rejected with a clear message
 """
 import logging
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# Extensions we can extract text from beyond plain UTF-8.
+_PDF_EXTENSIONS  = {".pdf"}
+_DOCX_EXTENSIONS = {".docx"}
+
+# Known binary formats we can't turn into text (rejected with a helpful error).
 _BINARY_EXTENSIONS = {
-    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".ico",
-    ".zip", ".tar", ".gz", ".bz2", ".xz", ".rar",
-    ".mp3", ".mp4", ".wav", ".avi", ".mov",
-    ".exe", ".dll", ".so", ".dylib",
-    ".xlsx", ".xls", ".pptx", ".ppt",
+    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".ico", ".tiff", ".heic",
+    ".zip", ".tar", ".gz", ".bz2", ".xz", ".rar", ".7z",
+    ".mp3", ".mp4", ".wav", ".avi", ".mov", ".mkv", ".flac",
+    ".exe", ".dll", ".so", ".dylib", ".bin",
+    ".xlsx", ".xls", ".pptx", ".ppt", ".doc",
 }
 
 
@@ -66,13 +75,39 @@ class FileStore:
 
     def _read_path(self, path: Path, label: str) -> str:
         ext = path.suffix.lower()
+        if ext in _PDF_EXTENSIONS:
+            return self._read_pdf(path, label)
+        if ext in _DOCX_EXTENSIONS:
+            return self._read_docx(path)
         if ext in _BINARY_EXTENSIONS:
             raise ValueError(
-                f"File '{label}' is a binary format and cannot be used as LLM context."
+                f"File '{label}' ({ext}) is a binary format we can't extract text from. "
+                f"Use a PDF, Word (.docx), or text file."
             )
-        if ext == ".docx":
-            return self._read_docx(path)
+        # Everything else is treated as text (.txt, .md, .csv, .json, .html, code, …).
         return path.read_text(encoding="utf-8", errors="replace")
+
+    @staticmethod
+    def _read_pdf(path: Path, label: str) -> str:
+        try:
+            from pypdf import PdfReader
+        except ImportError:
+            raise RuntimeError(
+                "pypdf is required to read PDF files. Run: pip install pypdf"
+            )
+        reader = PdfReader(str(path))
+        pages = []
+        for page in reader.pages:
+            text = (page.extract_text() or "").strip()
+            if text:
+                pages.append(text)
+        content = "\n\n".join(pages).strip()
+        if not content:
+            raise ValueError(
+                f"No text could be extracted from '{label}'. It's likely a scanned "
+                f"or image-only PDF, which needs OCR (not yet supported)."
+            )
+        return content
 
     @staticmethod
     def _read_docx(path: Path) -> str:

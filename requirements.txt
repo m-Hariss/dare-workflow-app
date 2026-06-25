@@ -8,3 +8,4 @@ cryptography
 chromadb
 python-multipart
 python-docx
+pypdf
