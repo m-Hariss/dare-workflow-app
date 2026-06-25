@@ -27,6 +27,16 @@ class FileHandler(BaseHandler):
                 threshold=threshold,
                 filenames=file_names if file_names else None,
             )
+            # Fallback: if nothing cleared the similarity threshold, still return the
+            # most-similar chunks so an uploaded file is never silently ignored
+            # (e.g. when its content isn't worded like the workflow's query).
+            if not chunks and file_names:
+                chunks = services.embed.search(
+                    query=query,
+                    top_k=top_k,
+                    threshold=0.0,
+                    filenames=file_names,
+                )
             for c in chunks:
                 label = f"From {c['filename']} (score {c['score']:.2f}):\n"
                 parts.append(label + c["text"] if include_meta else c["text"])
