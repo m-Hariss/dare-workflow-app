@@ -29,7 +29,7 @@ class Services:
         self.embed      = embed
 
     @classmethod
-    def from_config(cls, key_store=None, data_dir: Path | None = None):
+    def from_config(cls, key_store=None, data_dir: Path | None = None, file_map: dict | None = None):
         api_keys: dict         = {}
         ollama_host: Optional[str] = None
         files_folder: Optional[str] = None
@@ -47,7 +47,7 @@ class Services:
             embed_model    = key_store.get("embed_model")    or _DEFAULT_EMBED_MODEL
 
         llm        = LLMClient(api_keys=api_keys or None, ollama_host=ollama_host)
-        file_store = FileStore(files_folder)
+        file_store = FileStore(files_folder, file_map=file_map)
 
         effective_data_dir = data_dir or Path(".local_data")
         embed_pipeline = EmbeddingPipeline(

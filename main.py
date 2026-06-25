@@ -71,9 +71,26 @@ def _init_data_dir() -> Path:
         return Path(__file__).resolve().parent / ".local_data"
 
 
-_DATA_DIR     = _init_data_dir()
-key_store     = KeyStore(_DATA_DIR)
+_DATA_DIR      = _init_data_dir()
+_UPLOADS_DIR   = _DATA_DIR / "uploads"
+_FILE_MAP_PATH = _DATA_DIR / "file_map.json"
+
+key_store      = KeyStore(_DATA_DIR)
 workflow_store = WorkflowStore(_DATA_DIR)
+
+
+def _load_file_map() -> dict:
+    if _FILE_MAP_PATH.exists():
+        try:
+            return json.loads(_FILE_MAP_PATH.read_text())
+        except Exception:
+            return {}
+    return {}
+
+
+def _save_file_map(fmap: dict):
+    _FILE_MAP_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _FILE_MAP_PATH.write_text(json.dumps(fmap, indent=2))
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +120,7 @@ async def workflow_upload(file: UploadFile = FastAPIFile(...)):
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
     workflow_store.save(payload)
+    _save_file_map({})  # clear slot mappings from any previous workflow
     return {"ok": True, "title": payload.get("title", "Untitled")}
 
 
@@ -116,6 +134,7 @@ def workflow_from_path(body: WorkflowPathRequest):
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
     workflow_store.save(payload)
+    _save_file_map({})  # clear slot mappings from any previous workflow
     return {"ok": True, "title": payload.get("title", "Untitled")}
 
 
@@ -181,6 +200,39 @@ def list_files():
         "valid":  store.is_configured(),
         "files":  store.list_files(),
     }
+
+
+# File slot endpoints — let users upload their own files to replace workflow references
+
+@app.post("/files/slot", tags=["syftbox"])
+async def upload_slot_file(slot: str = Form(...), file: UploadFile = FastAPIFile(...)):
+    """Upload a file to fill a workflow file slot."""
+    _UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    dest = _UPLOADS_DIR / file.filename
+    dest.write_bytes(await file.read())
+    fmap = _load_file_map()
+    fmap[slot] = str(dest)
+    _save_file_map(fmap)
+    return {"ok": True, "slot": slot, "file": file.filename}
+
+
+@app.get("/files/slots", tags=["syftbox"])
+def get_file_slots():
+    """Return current slot → uploaded file mappings."""
+    fmap = _load_file_map()
+    return {
+        slot: {"path": path, "filename": Path(path).name, "exists": Path(path).exists()}
+        for slot, path in fmap.items()
+    }
+
+
+@app.delete("/files/slot/{slot_name:path}", tags=["syftbox"])
+def delete_file_slot(slot_name: str):
+    """Remove a slot mapping (does not delete the uploaded file from disk)."""
+    fmap = _load_file_map()
+    fmap.pop(slot_name, None)
+    _save_file_map(fmap)
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------
@@ -277,7 +329,7 @@ def run(data: RunRequest):
     except ValueError as e:
         return {"error": f"Invalid workflow: {e}"}
 
-    services = Services.from_config(key_store=key_store, data_dir=_DATA_DIR)
+    services = Services.from_config(key_store=key_store, data_dir=_DATA_DIR, file_map=_load_file_map())
     result   = ExecutionEngine(graph, services).run()
     result["saved_to"] = _save_result(result)
     return result
@@ -511,17 +563,31 @@ textarea { resize: vertical; min-height: 80px; font-family: inherit; }
     <div id="keysSection"></div>
   </div>
 
-  <!-- ③ Files Folder ──────────────────────────────── -->
+  <!-- ③ Files ──────────────────────────────────────── -->
   <div class="step" id="step3" style="display:none">
     <div class="step-hd"><div class="step-num">3</div><h2>Files</h2></div>
+
+    <!-- Required file slots -->
+    <div class="card">
+      <div class="card-row" style="padding-bottom:6px">
+        <div class="icon">📄</div>
+        <div class="info">
+          <h3>Upload your files</h3>
+          <p style="color:#6e6e73;font-size:.76rem">The workflow references these files from Dare. Upload your own version for each one.</p>
+        </div>
+      </div>
+      <div class="flist" id="slotList"><p class="fempty">Loading…</p></div>
+    </div>
+
+    <!-- Files folder (optional fallback) -->
     <div class="card">
       <div class="card-row">
         <div class="icon">📁</div>
         <div class="info">
-          <h3>Files folder</h3>
-          <p id="folderPath" style="color:#aeaeb2">Not configured</p>
+          <h3>Or use a files folder <span style="font-size:.7rem;font-weight:400;color:#aeaeb2">fallback</span></h3>
+          <p id="folderPath" style="color:#aeaeb2;font-size:.76rem">Not configured — used only if a slot above has no upload</p>
         </div>
-        <button class="btn btn-ghost" onclick="toggleFolderEdit()">Change</button>
+        <button class="btn btn-ghost" onclick="toggleFolderEdit()">Set</button>
       </div>
       <div class="tab-body hidden" id="folderEdit">
         <div class="row">
@@ -530,9 +596,6 @@ textarea { resize: vertical; min-height: 80px; font-family: inherit; }
         </div>
         <div class="msg" id="folderMsg"></div>
       </div>
-    </div>
-    <div class="card">
-      <div class="flist" id="fileList"><p class="fempty">Set a folder above to see files.</p></div>
     </div>
   </div>
 
@@ -639,6 +702,7 @@ async function clearWorkflow() {
   document.getElementById("loadCard").style.display = "";
   ["step2","step3","step4","step5"].forEach(id => document.getElementById(id).style.display = "none");
   document.getElementById("results").style.display = "none";
+  document.getElementById("slotList").innerHTML = '<p class="fempty">Loading…</p>';
 }
 
 /* ── Render workflow info ──────────────────────────── */
@@ -743,7 +807,51 @@ async function refreshKeys() {
   renderKeys(s);
 }
 
-/* ── Files Folder ─────────────────────────────────── */
+/* ── File Slots ────────────────────────────────────── */
+async function refreshSlots() {
+  const required = wfInfo ? wfInfo.required_files : [];
+  if (!required.length) return;
+
+  const slots = await fetch("/files/slots").then(r=>r.json());
+  const el = document.getElementById("slotList");
+
+  el.innerHTML = required.map(name => {
+    const slot = slots[name];
+    const mapped = slot && slot.exists;
+    const safeId = "slot-" + btoa(name).replace(/[^a-zA-Z0-9]/g,"");
+    return `<div class="frow" id="${safeId}">
+      <span class="fname">${esc(name)}</span>
+      <span class="fmeta" style="display:flex;align-items:center;gap:6px">
+        ${mapped
+          ? `<span class="badge ok">✓ ${esc(slot.filename)}</span>`
+          : `<span class="badge err">not uploaded</span>`}
+        <label class="btn btn-ghost" style="font-size:.72rem;padding:4px 10px;cursor:pointer;margin:0">
+          ${mapped ? "Replace" : "Upload"}
+          <input type="file" style="display:none" onchange="uploadSlotFile(${JSON.stringify(name)}, this)">
+        </label>
+        ${mapped ? `<button class="btn btn-danger" style="font-size:.72rem;padding:4px 8px;margin:0" onclick="removeSlot(${JSON.stringify(name)})">×</button>` : ""}
+      </span>
+    </div>`;
+  }).join("");
+}
+
+async function uploadSlotFile(slotName, input) {
+  const file = input.files[0];
+  if (!file) return;
+  const fd = new FormData();
+  fd.append("slot", slotName);
+  fd.append("file", file);
+  const r = await fetch("/files/slot", { method: "POST", body: fd });
+  if (r.ok) await refreshSlots();
+  else alert("Upload failed.");
+}
+
+async function removeSlot(slotName) {
+  await fetch("/files/slot/" + encodeURIComponent(slotName), { method: "DELETE" });
+  await refreshSlots();
+}
+
+/* ── Files Folder (fallback) ───────────────────────── */
 async function refreshFolder() {
   const cfg = await fetch("/config").then(r=>r.json());
   const el = document.getElementById("folderPath");
@@ -752,10 +860,9 @@ async function refreshFolder() {
     el.style.color = cfg.files_folder_valid ? "#1d1d1f" : "#d12f2f";
     if (!cfg.files_folder_valid) el.textContent += " ⚠ not found";
   } else {
-    el.textContent = "Not configured";
+    el.textContent = "Not configured — used only if a slot above has no upload";
     el.style.color = "#aeaeb2";
   }
-  refreshFileList();
 }
 
 function toggleFolderEdit() {
@@ -770,35 +877,6 @@ async function saveFolder() {
     showMsg("folderMsg","Saved!",false);
     setTimeout(() => { document.getElementById("folderEdit").classList.add("hidden"); refreshFolder(); }, 800);
   } else showMsg("folderMsg","Error.",true);
-}
-
-async function refreshFileList() {
-  const d = await fetch("/files").then(r=>r.json());
-  const el = document.getElementById("fileList");
-  const required = wfInfo ? wfInfo.required_files : [];
-
-  if (!d.folder) { el.innerHTML='<p class="fempty">Set a folder above.</p>'; return; }
-  if (!d.valid)  { el.innerHTML='<p class="fempty" style="color:#d12f2f">Folder not found.</p>'; return; }
-  if (!d.files.length) { el.innerHTML='<p class="fempty">Folder is empty.</p>'; return; }
-
-  const present = new Set(d.files.map(f=>f.name));
-  const missing = required.filter(n=>!present.has(n));
-
-  let html = d.files.map(f => {
-    const needed = required.includes(f.name);
-    return `<div class="frow">
-      <span class="fname">${esc(f.name)}</span>
-      <span class="fmeta">${fmt(f.size)}${needed?' <span class="badge ok">needed ✓</span>':''}</span>
-    </div>`;
-  }).join("");
-
-  if (missing.length) {
-    html += missing.map(n=>`<div class="frow">
-      <span class="fname" style="color:#d12f2f">${esc(n)}</span>
-      <span class="fmeta"><span class="badge err">missing</span></span>
-    </div>`).join("");
-  }
-  el.innerHTML = html;
 }
 
 /* ── Embeddings ───────────────────────────────────── */
@@ -938,6 +1016,7 @@ async function refreshAll() {
 
   if (info.needs_files) {
     document.getElementById("step3").style.display = "";
+    await refreshSlots();
     await refreshFolder();
   }
 
