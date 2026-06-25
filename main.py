@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
-from fastapi import HTTPException, UploadFile, File as FastAPIFile
+from fastapi import HTTPException, UploadFile, File as FastAPIFile, Form
 from fastapi.responses import HTMLResponse
 from fastsyftbox import FastSyftBox
 from pydantic import BaseModel
