@@ -21,6 +21,10 @@ class SlotUploadRequest(BaseModel):
     content_b64: str   # base64 of the file bytes — JSON-safe so it rides the syft:// RPC transport
 
 
+class SlotEmbedRequest(BaseModel):
+    slot: str
+
+
 def _slot_needs_embedding(slot_id: str) -> bool:
     """True if the active workflow declares this slot as an embedding input."""
     info = workflow_store.get_info() or {}
@@ -61,10 +65,9 @@ def register(app):
         JSON rather than multipart so the upload works over the SyftBox syft://
         RPC transport (which carries JSON, not multipart binary), not just plain HTTP.
 
-        If the slot is an embedding input, the file is chunked + embedded into
-        ChromaDB right away (keyed by the slot id) so retrieval works at run time.
-        Embedding failures (e.g. no embed key yet) don't fail the upload — they're
-        reported so the user can fix the key and re-upload.
+        This only saves the file. Embedding is a separate call (/files/slot/embed)
+        so the UI can show "uploading" then "generating embeddings" as distinct
+        phases. `needs_embedding` tells the client whether to follow up.
         """
         try:
             raw = base64.b64decode(body.content_b64)
@@ -78,15 +81,27 @@ def register(app):
         fmap[body.slot] = str(dest)
         save_file_map(fmap)
 
-        resp = {"ok": True, "slot": body.slot, "file": dest.name, "embedded": False}
-        if _slot_needs_embedding(body.slot):
-            try:
-                resp["chunks"] = embed_slot(body.slot)
-                resp["embedded"] = True
-            except Exception as e:
-                logger.warning("Auto-embed failed for slot %s: %s", body.slot, e)
-                resp["embed_error"] = str(e)
-        return resp
+        return {
+            "ok": True,
+            "slot": body.slot,
+            "file": dest.name,
+            "needs_embedding": _slot_needs_embedding(body.slot),
+        }
+
+    @app.post("/files/slot/embed", tags=["syftbox"])
+    def embed_slot_file(body: SlotEmbedRequest):
+        """Chunk + embed an already-uploaded slot file into ChromaDB.
+
+        Called by the UI right after upload (for embed slots). Kept separate so the
+        upload returns immediately and the embedding runs as its own visible phase.
+        Failures (e.g. no embed key) are reported, not raised — the file stays.
+        """
+        try:
+            chunks = embed_slot(body.slot)
+            return {"ok": True, "embedded": True, "chunks": chunks}
+        except Exception as e:
+            logger.warning("Embed failed for slot %s: %s", body.slot, e)
+            return {"ok": True, "embedded": False, "embed_error": str(e)}
 
     @app.get("/files/slots", tags=["syftbox"])
     def get_file_slots():
@@ -108,9 +123,21 @@ def register(app):
 
     @app.delete("/files/slot/{slot_name:path}", tags=["syftbox"])
     def delete_file_slot(slot_name: str):
-        """Remove a slot mapping and its embeddings (the uploaded file stays on disk)."""
+        """Remove a slot: its mapping, its embeddings, and the uploaded file on disk.
+
+        The physical file is only deleted if it lives in our uploads/ folder and no
+        other slot still points at it (never touches files in a user's files folder).
+        """
         fmap = load_file_map()
-        fmap.pop(slot_name, None)
+        path = fmap.pop(slot_name, None)
         save_file_map(fmap)
         remove_slot_embeddings(slot_name)
+
+        if path:
+            p = Path(path)
+            try:
+                if p.parent == UPLOADS_DIR and p.exists() and path not in fmap.values():
+                    p.unlink()
+            except Exception as e:
+                logger.warning("Could not delete uploaded file %s: %s", path, e)
         return {"ok": True}

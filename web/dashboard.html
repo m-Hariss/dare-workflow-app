@@ -525,33 +525,44 @@ async function uploadSlotFile(slotName, input) {
   const file = input.files[0];
   if (!file) return;
 
-  // Immediate feedback — the request can take a few seconds while the file embeds.
   const statusEl = document.getElementById(slotRowId(slotName) + "_status");
-  if (statusEl) {
-    const msg = slotIsEmbed(slotName) ? "⏳ Uploading & embedding…" : "⏳ Uploading…";
-    statusEl.innerHTML = `<span class="badge warn">${msg}</span><span class="fmeta">${esc(file.name)}</span>`;
-  }
+  const setStatus = html => { if (statusEl) statusEl.innerHTML = html; };
 
+  // Phase 1: uploading
+  setStatus(`<span class="badge warn">⏳ Uploading…</span><span class="fmeta">${esc(file.name)}</span>`);
   try {
     const content_b64 = await fileToBase64(file);
     const r = await fetch("/files/slot", {
       method: "POST", headers: {"Content-Type":"application/json"},
       body: JSON.stringify({ slot: slotName, filename: file.name, content_b64 }),
     });
-    if (!r.ok) {
-      if (statusEl) statusEl.innerHTML = `<span class="badge err">upload failed</span>`;
+    if (!r.ok) { setStatus(`<span class="badge err">✗ upload failed</span>`); return; }
+    const d = await r.json();
+
+    if (!d.needs_embedding) {
+      setStatus(`<span class="badge ok">✓ uploaded</span>`);
+      await refreshSlots();
       return;
     }
-    const d = await r.json();
-    if (d.embedded) {
-      // brief success flash before the full refresh repaints the row
-      if (statusEl) statusEl.innerHTML = `<span class="badge ok">✓ uploaded</span><span class="badge ok">🔍 ${d.chunks} chunks</span>`;
-    } else if (d.embed_error) {
-      alert("File uploaded, but embedding failed:\n\n" + d.embed_error +
-            "\n\nSet your embedding key (step 4), then re-upload.");
+
+    // Phase 2: generating embeddings
+    setStatus(`<span class="badge ok">✓ uploaded</span><span class="badge warn">⏳ Generating embeddings…</span>`);
+    const er = await fetch("/files/slot/embed", {
+      method: "POST", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ slot: slotName }),
+    });
+    const ed = await er.json();
+    if (ed.embedded) {
+      setStatus(`<span class="badge ok">✓ uploaded</span><span class="badge ok">🔍 ${ed.chunks} chunks · embeddings ready</span>`);
+    } else {
+      setStatus(`<span class="badge ok">✓ uploaded</span><span class="badge warn">not embedded</span>`);
+      if (ed.embed_error) {
+        alert("File uploaded, but embedding failed:\n\n" + ed.embed_error +
+              "\n\nSet your embedding key (step 4), then re-upload.");
+      }
     }
   } catch (e) {
-    if (statusEl) statusEl.innerHTML = `<span class="badge err">upload failed</span>`;
+    setStatus(`<span class="badge err">✗ upload failed</span>`);
   }
   await refreshSlots();
 }
