@@ -7,7 +7,7 @@ and the installed FastAPI nests include_router() routes out of that view.
 import json
 from pathlib import Path
 
-from fastapi import HTTPException, UploadFile, File as FastAPIFile
+from fastapi import HTTPException
 from pydantic import BaseModel
 
 from deps import workflow_store, save_file_map
@@ -17,12 +17,15 @@ class WorkflowPathRequest(BaseModel):
     path: str
 
 
+class WorkflowUploadRequest(BaseModel):
+    content: str   # raw JSON text of the exported workflow — JSON body rides the syft:// RPC transport
+
+
 def register(app):
     @app.post("/workflow/upload", tags=["syftbox"])
-    async def workflow_upload(file: UploadFile = FastAPIFile(...)):
-        content = await file.read()
+    def workflow_upload(body: WorkflowUploadRequest):
         try:
-            payload = json.loads(content)
+            payload = json.loads(body.content)
         except json.JSONDecodeError as e:
             raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
         workflow_store.save(payload)

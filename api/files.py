@@ -1,8 +1,10 @@
 """Config, file listing, and file-slot endpoints."""
+import base64
 import logging
 from pathlib import Path
 
-from fastapi import UploadFile, File as FastAPIFile, Form
+from fastapi import HTTPException
+from pydantic import BaseModel
 
 from deps import (
     key_store, load_file_map, save_file_map, UPLOADS_DIR,
@@ -11,6 +13,12 @@ from deps import (
 from file_store import FileStore
 
 logger = logging.getLogger(__name__)
+
+
+class SlotUploadRequest(BaseModel):
+    slot: str
+    filename: str
+    content_b64: str   # base64 of the file bytes — JSON-safe so it rides the syft:// RPC transport
 
 
 def _slot_needs_embedding(slot_id: str) -> bool:
@@ -47,28 +55,36 @@ def register(app):
     # File slot endpoints — let users upload their own files to replace workflow references
 
     @app.post("/files/slot", tags=["syftbox"])
-    async def upload_slot_file(slot: str = Form(...), file: UploadFile = FastAPIFile(...)):
-        """Upload a file to fill a workflow file slot.
+    def upload_slot_file(body: SlotUploadRequest):
+        """Upload a file (base64-in-JSON) to fill a workflow file slot.
+
+        JSON rather than multipart so the upload works over the SyftBox syft://
+        RPC transport (which carries JSON, not multipart binary), not just plain HTTP.
 
         If the slot is an embedding input, the file is chunked + embedded into
         ChromaDB right away (keyed by the slot id) so retrieval works at run time.
         Embedding failures (e.g. no embed key yet) don't fail the upload — they're
         reported so the user can fix the key and re-upload.
         """
+        try:
+            raw = base64.b64decode(body.content_b64)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid file content: {e}")
+
         UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
-        dest = UPLOADS_DIR / file.filename
-        dest.write_bytes(await file.read())
+        dest = UPLOADS_DIR / Path(body.filename).name
+        dest.write_bytes(raw)
         fmap = load_file_map()
-        fmap[slot] = str(dest)
+        fmap[body.slot] = str(dest)
         save_file_map(fmap)
 
-        resp = {"ok": True, "slot": slot, "file": file.filename, "embedded": False}
-        if _slot_needs_embedding(slot):
+        resp = {"ok": True, "slot": body.slot, "file": dest.name, "embedded": False}
+        if _slot_needs_embedding(body.slot):
             try:
-                resp["chunks"] = embed_slot(slot)
+                resp["chunks"] = embed_slot(body.slot)
                 resp["embedded"] = True
             except Exception as e:
-                logger.warning("Auto-embed failed for slot %s: %s", slot, e)
+                logger.warning("Auto-embed failed for slot %s: %s", body.slot, e)
                 resp["embed_error"] = str(e)
         return resp
 

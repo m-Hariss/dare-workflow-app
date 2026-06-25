@@ -334,12 +334,25 @@ async function uploadWorkflow(input) {
   const file = input.files[0];
   if (!file) return;
   document.getElementById("uploadName").textContent = file.name;
-  const fd = new FormData();
-  fd.append("file", file);
-  const r = await fetch("/workflow/upload", { method: "POST", body: fd });
+  // Send the JSON text in a JSON body (not multipart) so it works over the SyftBox RPC transport.
+  const content = await file.text();
+  const r = await fetch("/workflow/upload", {
+    method: "POST", headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ content }),
+  });
   const d = await r.json();
   if (r.ok) { showMsg("uploadMsg", "Loaded: " + d.title, false); await refreshAll(); }
   else showMsg("uploadMsg", d.detail || "Error", true);
+}
+
+// Read a File as base64 (without the data: prefix) for JSON-safe upload.
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload  = () => resolve(String(r.result).split(",")[1] || "");
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
 }
 
 async function loadFromPath() {
@@ -519,11 +532,12 @@ async function uploadSlotFile(slotName, input) {
     statusEl.innerHTML = `<span class="badge warn">${msg}</span><span class="fmeta">${esc(file.name)}</span>`;
   }
 
-  const fd = new FormData();
-  fd.append("slot", slotName);
-  fd.append("file", file);
   try {
-    const r = await fetch("/files/slot", { method: "POST", body: fd });
+    const content_b64 = await fileToBase64(file);
+    const r = await fetch("/files/slot", {
+      method: "POST", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ slot: slotName, filename: file.name, content_b64 }),
+    });
     if (!r.ok) {
       if (statusEl) statusEl.innerHTML = `<span class="badge err">upload failed</span>`;
       return;
