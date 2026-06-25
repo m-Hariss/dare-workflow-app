@@ -467,6 +467,12 @@ async function refreshKeys() {
 }
 
 /* ── File Slots ────────────────────────────────────── */
+function slotRowId(id){ return "slot_" + String(id).replace(/[^a-zA-Z0-9]/g,"_"); }
+function slotIsEmbed(id){
+  const s = (wfInfo && wfInfo.required_files || []).find(x => x.id === id);
+  return s && (s.usage || "").indexOf("embed") !== -1;
+}
+
 async function refreshSlots() {
   const required = wfInfo ? wfInfo.required_files : [];
   if (!required.length) return;
@@ -481,14 +487,17 @@ async function refreshSlots() {
     const slot  = slots[id];
     const mapped = slot && slot.exists;
     const indexed = mapped && slot.indexed;
-    return `<div class="frow">
+    const rid = slotRowId(id);
+    return `<div class="frow" id="${rid}">
       <span class="fname">${esc(label)}${embed ? ' <span class="fmeta">· will be embedded</span>' : ''}</span>
       <span class="fmeta" style="display:flex;align-items:center;gap:6px">
+        <span id="${rid}_status" style="display:flex;align-items:center;gap:6px">
         ${mapped
           ? `<span class="badge ok">✓ ${esc(slot.filename)}</span>`
           : `<span class="badge err">not uploaded</span>`}
         ${indexed ? `<span class="badge ok">🔍 ${slot.chunks} chunks</span>`
                   : (mapped && embed ? `<span class="badge warn">not embedded</span>` : "")}
+        </span>
         <label class="btn btn-ghost" style="font-size:.72rem;padding:4px 10px;cursor:pointer;margin:0">
           ${mapped ? "Replace" : "Upload"}
           <input type="file" style="display:none" onchange="uploadSlotFile(${JSON.stringify(id)}, this)">
@@ -502,15 +511,33 @@ async function refreshSlots() {
 async function uploadSlotFile(slotName, input) {
   const file = input.files[0];
   if (!file) return;
+
+  // Immediate feedback — the request can take a few seconds while the file embeds.
+  const statusEl = document.getElementById(slotRowId(slotName) + "_status");
+  if (statusEl) {
+    const msg = slotIsEmbed(slotName) ? "⏳ Uploading & embedding…" : "⏳ Uploading…";
+    statusEl.innerHTML = `<span class="badge warn">${msg}</span><span class="fmeta">${esc(file.name)}</span>`;
+  }
+
   const fd = new FormData();
   fd.append("slot", slotName);
   fd.append("file", file);
-  const r = await fetch("/files/slot", { method: "POST", body: fd });
-  if (!r.ok) { alert("Upload failed."); return; }
-  const d = await r.json();
-  if (d.embed_error) {
-    alert("File uploaded, but embedding failed:\n\n" + d.embed_error +
-          "\n\nSet your embedding key (step 4), then re-upload.");
+  try {
+    const r = await fetch("/files/slot", { method: "POST", body: fd });
+    if (!r.ok) {
+      if (statusEl) statusEl.innerHTML = `<span class="badge err">upload failed</span>`;
+      return;
+    }
+    const d = await r.json();
+    if (d.embedded) {
+      // brief success flash before the full refresh repaints the row
+      if (statusEl) statusEl.innerHTML = `<span class="badge ok">✓ uploaded</span><span class="badge ok">🔍 ${d.chunks} chunks</span>`;
+    } else if (d.embed_error) {
+      alert("File uploaded, but embedding failed:\n\n" + d.embed_error +
+            "\n\nSet your embedding key (step 4), then re-upload.");
+    }
+  } catch (e) {
+    if (statusEl) statusEl.innerHTML = `<span class="badge err">upload failed</span>`;
   }
   await refreshSlots();
 }
