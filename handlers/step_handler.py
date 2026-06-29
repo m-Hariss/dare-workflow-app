@@ -1,6 +1,6 @@
 """Step node — builds the prompt, injects context/files, calls the LLM."""
 from handlers.base import BaseHandler
-from prompts import build_step_message
+from core.prompts import build_step_message
 
 
 class StepHandler(BaseHandler):

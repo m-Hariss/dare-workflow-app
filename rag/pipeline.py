@@ -45,12 +45,13 @@ def chunk_text(text: str, chunk_size: int = _DEFAULT_CHUNK_SIZE, overlap: int = 
 
 
 class EmbeddingPipeline:
-    def __init__(self, vector_store, llm_client, data_dir: Path, provider: str, model: str):
-        self._store = vector_store
-        self._llm   = llm_client
+    def __init__(self, vector_store, embed_client, data_dir: Path):
+        self._store  = vector_store
+        self._client = embed_client
         self._status_file = Path(data_dir) / "index_status.json"
-        self.provider = provider
-        self.model    = model
+        # Expose provider/model for status reporting (sourced from the embed client).
+        self.provider = embed_client.provider
+        self.model    = embed_client.model
 
     # ------------------------------------------------------------------
     # Indexing
@@ -67,7 +68,7 @@ class EmbeddingPipeline:
 
         embeddings = []
         for i, chunk in enumerate(chunks):
-            emb = self._llm.embed(chunk, self.provider, self.model)
+            emb = self._client.embed(chunk)
             embeddings.append(emb)
             logger.debug("Embedded chunk %d/%d for %s", i + 1, len(chunks), filename)
 
@@ -87,7 +88,7 @@ class EmbeddingPipeline:
         filenames: list[str] | None = None,
     ) -> list[dict]:
         """Embed query and return matching chunks from ChromaDB."""
-        query_embedding = self._llm.embed(query, self.provider, self.model)
+        query_embedding = self._client.embed(query)
         return self._store.query(query_embedding, top_k, threshold, filenames)
 
     # ------------------------------------------------------------------

@@ -11,12 +11,12 @@ from pathlib import Path
 from dotenv import load_dotenv
 from syft_core import Client
 
-from clients.llm_client import LLMClient
-from embedding_pipeline import EmbeddingPipeline
-from file_store import FileStore
-from key_store import KeyStore
-from vector_store import VectorStore
-from workflow_store import WorkflowStore
+from providers.embeddings import EmbeddingClient
+from rag.pipeline import EmbeddingPipeline
+from storage.file_store import FileStore
+from storage.key_store import KeyStore
+from storage.vector_store import VectorStore
+from storage.workflow_store import WorkflowStore
 
 logger = logging.getLogger(__name__)
 
@@ -70,14 +70,17 @@ def save_file_map(fmap: dict):
 def make_embed_pipeline() -> EmbeddingPipeline:
     provider = key_store.get("embed_provider") or "openai"
     model    = key_store.get("embed_model")    or "text-embedding-3-small"
-    api_keys = {p: v for p in ("openai", "claude", "gemini") if (v := key_store.get(p))}
-    llm = LLMClient(api_keys=api_keys or None, ollama_host=key_store.get("ollama"))
-    return EmbeddingPipeline(
-        vector_store=VectorStore(DATA_DIR),
-        llm_client=llm,
-        data_dir=DATA_DIR,
+    api_key  = key_store.get(provider) or key_store.get("openai")
+    embed_client = EmbeddingClient(
         provider=provider,
         model=model,
+        api_key=api_key,
+        ollama_host=key_store.get("ollama"),
+    )
+    return EmbeddingPipeline(
+        vector_store=VectorStore(DATA_DIR),
+        embed_client=embed_client,
+        data_dir=DATA_DIR,
     )
 
 

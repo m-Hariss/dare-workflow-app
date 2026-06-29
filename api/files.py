@@ -10,7 +10,7 @@ from deps import (
     key_store, load_file_map, save_file_map, UPLOADS_DIR,
     embed_slot, remove_slot_embeddings, read_index_status, workflow_store,
 )
-from file_store import FileStore
+from storage.file_store import FileStore
 
 logger = logging.getLogger(__name__)
 

@@ -9,7 +9,7 @@ import json
 import logging
 from pathlib import Path
 
-from workflow_loader import normalize_export
+from core.loader import normalize_export
 
 logger = logging.getLogger(__name__)
 

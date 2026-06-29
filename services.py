@@ -4,14 +4,14 @@ Everything runs locally — no external API calls except to the user's chosen
 LLM provider. Files are read from the local files folder; embeddings and
 retrieval use ChromaDB on disk.
 """
-import os
 from pathlib import Path
 from typing import Optional
 
-from clients.llm_client import LLMClient
-from embedding_pipeline import EmbeddingPipeline
-from file_store import FileStore
-from vector_store import VectorStore
+from providers.embeddings import EmbeddingClient
+from providers.llm import LLMClient
+from rag.pipeline import EmbeddingPipeline
+from storage.file_store import FileStore
+from storage.vector_store import VectorStore
 
 _DEFAULT_EMBED_PROVIDER = "openai"
 _DEFAULT_EMBED_MODEL    = "text-embedding-3-small"
@@ -30,7 +30,7 @@ class Services:
 
     @classmethod
     def from_config(cls, key_store=None, data_dir: Path | None = None, file_map: dict | None = None):
-        api_keys: dict         = {}
+        api_keys: dict             = {}
         ollama_host: Optional[str] = None
         files_folder: Optional[str] = None
         embed_provider = _DEFAULT_EMBED_PROVIDER
@@ -50,12 +50,17 @@ class Services:
         file_store = FileStore(files_folder, file_map=file_map)
 
         effective_data_dir = data_dir or Path(".local_data")
-        embed_pipeline = EmbeddingPipeline(
-            vector_store=VectorStore(effective_data_dir),
-            llm_client=llm,
-            data_dir=effective_data_dir,
+        embed_api_key = api_keys.get(embed_provider) or api_keys.get("openai")
+        embed_client = EmbeddingClient(
             provider=embed_provider,
             model=embed_model,
+            api_key=embed_api_key,
+            ollama_host=ollama_host,
+        )
+        embed_pipeline = EmbeddingPipeline(
+            vector_store=VectorStore(effective_data_dir),
+            embed_client=embed_client,
+            data_dir=effective_data_dir,
         )
 
         return cls(llm=llm, file_store=file_store, embed=embed_pipeline)

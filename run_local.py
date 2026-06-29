@@ -14,9 +14,9 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from execution_engine import ExecutionEngine
+from core.engine import ExecutionEngine
 from services import Services
-from workflow_loader import load_workflow
+from core.loader import load_workflow
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
 

@@ -18,9 +18,9 @@ from pydantic import BaseModel
 from syft_core import Client
 
 from deps import app_name, key_store, workflow_store, DATA_DIR, load_file_map
-from execution_engine import ExecutionEngine
+from core.engine import ExecutionEngine
 from services import Services
-from workflow_loader import load_workflow
+from core.loader import load_workflow
 
 logger = logging.getLogger(__name__)
 

@@ -23,7 +23,7 @@ input is given a stable synthetic slot id — "<nodeId>" for a single input, or
 "<nodeId>::<key>" when a node declares several. That slot id is what the upload
 slot, the embedding index, and the file handler all key on.
 """
-from graph import Graph
+from core.graph import Graph
 
 SUPPORTED_SCHEMA_VERSIONS = {"v1", "v2"}
 

@@ -1,6 +1,6 @@
 """Router node — LLM picks one of the configured routes."""
 from handlers.base import BaseHandler
-from prompts import build_router_message
+from core.prompts import build_router_message
 
 
 class RouterHandler(BaseHandler):

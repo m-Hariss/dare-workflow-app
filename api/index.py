@@ -1,6 +1,6 @@
 """Embedding / indexing endpoints."""
 from deps import key_store, make_embed_pipeline
-from file_store import FileStore
+from storage.file_store import FileStore
 
 
 def register(app):

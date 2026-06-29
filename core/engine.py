@@ -7,7 +7,7 @@ logic — that lives in the handlers.
 import logging
 
 from handlers.registry import get_handler
-from state_manager import StateManager
+from core.state import StateManager
 
 logger = logging.getLogger(__name__)
 
