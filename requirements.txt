@@ -4,3 +4,7 @@ fastsyftbox
 pydantic
 requests
 python-dotenv
+chromadb
+python-multipart
+python-docx
+pypdf

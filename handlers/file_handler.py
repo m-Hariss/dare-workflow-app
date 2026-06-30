@@ -1,45 +1,52 @@
-"""File node — fetches file content / retrieval chunks from Dare."""
+"""File node — reads file content or runs semantic search via ChromaDB."""
 from handlers.base import BaseHandler
 
 
 class FileHandler(BaseHandler):
     def execute(self, node, context, services, state) -> dict:
-        data = node.get("data", {})
-        files = data.get("files", [])
-        file_ids = [f["fileId"] for f in files]
-        mode = data.get("retrievalMode", "content")
+        data         = node.get("data", {})
+        files        = data.get("files", [])
+        mode         = data.get("retrievalMode", "content")
         include_meta = data.get("includeMetadata", True)
-        parts = []
+        top_k        = data.get("maxResults", 10)
+        threshold    = data.get("similarityThreshold", 0.5)
+        parts        = []
+
+        file_names = [f.get("name") or str(f.get("fileId", "unknown")) for f in files]
 
         if mode in ("content", "both"):
-            for f in files:
-                content = services.dare.get_file_content(f["fileId"])
-                if include_meta:
-                    parts.append(f"From {f.get('name')}:\n{content}")
-                else:
-                    parts.append(content)
+            for name in file_names:
+                content = services.file_store.get_content(name)
+                parts.append(f"From {name}:\n{content}" if include_meta else content)
 
         if mode in ("embeddings", "both"):
             query = self._query_text(data, context)
-            chunks = services.dare.retrieval_query(
+            chunks = services.embed.search(
                 query=query,
-                file_ids=file_ids,
-                top_k=data.get("maxResults", 10),
-                similarity_threshold=data.get("similarityThreshold", 0.5),
+                top_k=top_k,
+                threshold=threshold,
+                filenames=file_names if file_names else None,
             )
+            # Fallback: if nothing cleared the similarity threshold, still return the
+            # most-similar chunks so an uploaded file is never silently ignored
+            # (e.g. when its content isn't worded like the workflow's query).
+            if not chunks and file_names:
+                chunks = services.embed.search(
+                    query=query,
+                    top_k=top_k,
+                    threshold=0.0,
+                    filenames=file_names,
+                )
             for c in chunks:
-                if include_meta:
-                    parts.append(f"From {c['file_name']} (score {c['score']:.2f}):\n{c['text']}")
-                else:
-                    parts.append(c["text"])
+                label = f"From {c['filename']} (score {c['score']:.2f}):\n"
+                parts.append(label + c["text"] if include_meta else c["text"])
 
         return {
             "output": "\n\n".join(parts),
-            "metadata": {"file_ids": file_ids, "retrieval_mode": mode},
+            "metadata": {"files": file_names, "retrieval_mode": mode},
         }
 
     def _query_text(self, data, context) -> str:
         if data.get("querySource") == "text_input":
             return data.get("textInput", "")
-        # previous_step (default): use the most recent upstream output.
         return context[-1]["output"] if context else data.get("textInput", "")

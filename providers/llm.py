@@ -1,4 +1,4 @@
-"""Multi-provider LLM client (no SDKs — plain HTTP via requests).
+"""Multi-provider LLM client for chat completions (no SDKs — plain HTTP via requests).
 
 Mirrors Dare's provider behavior:
 - openai / custom / LiteLLM proxy : OpenAI-compatible /chat/completions
@@ -50,11 +50,11 @@ class LLMClient:
             return self._openai(llm, message, max_tokens, temperature, web_search, base_url=base_url)
         if provider in ("openai", "custom"):
             return self._openai(llm, message, max_tokens, temperature, web_search)
-        if provider == "claude":
+        if provider in ("claude", "anthropic"):
             return self._claude(llm, message, max_tokens, temperature, web_search)
-        if provider == "gemini":
+        if provider in ("gemini", "google"):
             return self._gemini(llm, message, max_tokens, temperature, web_search)
-        if provider == "llama":
+        if provider in ("llama", "ollama"):
             return self._llama(llm, message, max_tokens, temperature)
         # Unknown provider: best-effort OpenAI-compatible.
         return self._openai(llm, message, max_tokens, temperature, web_search)
