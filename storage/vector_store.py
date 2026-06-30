@@ -65,9 +65,15 @@ class VectorStore:
         """Return chunks whose cosine similarity to query_embedding ≥ threshold."""
         total = self._col.count()
         if total == 0:
+            logger.warning("[VectorStore.query] collection is empty")
             return []
 
-        where = {"filename": {"$in": filenames}} if filenames else None
+        if filenames and len(filenames) == 1:
+            where = {"filename": filenames[0]}
+        elif filenames:
+            where = {"filename": {"$in": filenames}}
+        else:
+            where = None
         n = min(top_k, total)
 
         try:
@@ -78,12 +84,24 @@ class VectorStore:
                 include=["documents", "metadatas", "distances"],
             )
         except Exception as e:
-            logger.error("ChromaDB query failed: %s", e)
-            return []
+            logger.warning("[VectorStore.query] query failed (%s), retrying with n=1", e)
+            try:
+                results = self._col.query(
+                    query_embeddings=[query_embedding],
+                    n_results=1,
+                    where=where,
+                    include=["documents", "metadatas", "distances"],
+                )
+            except Exception as e2:
+                logger.error("[VectorStore.query] retry also failed: %s", e2)
+                return []
 
         docs = results["documents"][0]
         metas = results["metadatas"][0]
         dists = results["distances"][0]
+
+        logger.info("[VectorStore.query] raw results: %d docs  distances=%s",
+                    len(dists), [round(d, 3) for d in dists])
 
         chunks = []
         for doc, meta, dist in zip(docs, metas, dists):
@@ -96,6 +114,8 @@ class VectorStore:
                     "chunk_index": meta.get("chunk_index", 0),
                 })
 
+        logger.info("[VectorStore.query] after threshold=%.2f: %d/%d chunks passed",
+                    threshold, len(chunks), len(dists))
         return sorted(chunks, key=lambda c: c["score"], reverse=True)
 
     # ------------------------------------------------------------------

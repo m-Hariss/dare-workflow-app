@@ -130,7 +130,7 @@ class WorkflowStore:
                     needs_embeddings = True
 
         return {
-            "title":              payload.get("title", "Untitled Workflow"),
+            "title":              payload.get("title") or "Untitled Workflow",
             "description":        payload.get("description", ""),
             "mode":               payload.get("mode", "sequential"),
             "steps":              steps,

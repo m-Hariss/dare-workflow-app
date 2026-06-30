@@ -4,6 +4,7 @@ Single import point for the API layer — replaces the old deps.py + services.py
 """
 import json
 import logging
+import threading
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -43,6 +44,36 @@ FILE_MAP_PATH = DATA_DIR / "file_map.json"
 key_store      = KeyStore(DATA_DIR)
 workflow_store = WorkflowStore(DATA_DIR)
 
+# In-memory embed progress — written from the embed thread, read by the progress endpoint.
+# { slot_id: {"current": 3, "total": 10, "done": False, "file": "name"} }
+_embed_progress: dict = {}
+
+
+def set_embed_progress(slot_id: str, current: int, total: int, done: bool = False, file: str = ""):
+    _embed_progress[slot_id] = {"current": current, "total": total, "done": done, "file": file}
+
+
+def get_embed_progress(slot_id: str) -> dict:
+    return _embed_progress.get(slot_id, {"current": 0, "total": 0, "done": False, "file": ""})
+
+
+def clear_embed_progress(slot_id: str):
+    _embed_progress.pop(slot_id, None)
+
+
+# Shared singleton — one ChromaDB PersistentClient per process.
+# _chroma_lock serialises all ChromaDB writes so concurrent embed requests
+# (one per slot) don't race on the same SQLite file.
+_shared_vector_store: "VectorStore | None" = None
+_chroma_lock = threading.Lock()
+
+
+def _get_vector_store() -> VectorStore:
+    global _shared_vector_store
+    if _shared_vector_store is None:
+        _shared_vector_store = VectorStore(DATA_DIR)
+    return _shared_vector_store
+
 
 # ---------------------------------------------------------------------------
 # File-slot mapping
@@ -80,12 +111,14 @@ def _build_llm_client() -> LLMClient:
 
 
 def _build_embed_pipeline() -> EmbeddingPipeline:
-    provider = key_store.get("embed_provider") or "openai"
-    model    = key_store.get("embed_model")    or "text-embedding-3-small"
-    api_key  = key_store.get(provider) or key_store.get("openai")
-    client   = EmbeddingClient(provider=provider, model=model, api_key=api_key,
-                                ollama_host=key_store.get("ollama"))
-    return EmbeddingPipeline(VectorStore(DATA_DIR), client, DATA_DIR)
+    # Embedding model is always text-embedding-3-large via OpenAI (matches Dare's OpenAIWrapper).
+    client = EmbeddingClient(
+        provider="openai",
+        model="text-embedding-3-large",
+        api_key=key_store.get("openai"),
+        ollama_host=key_store.get("ollama"),
+    )
+    return EmbeddingPipeline(_get_vector_store(), client, DATA_DIR)
 
 
 def make_services() -> Services:
@@ -109,22 +142,37 @@ def make_embed_pipeline() -> EmbeddingPipeline:
 def embed_slot(slot_id: str) -> int:
     """Chunk + embed an uploaded slot file into ChromaDB. Returns chunk count."""
     logger.info("[embed_slot] START  slot=%s", slot_id)
-    provider = key_store.get("embed_provider") or "openai"
-    model    = key_store.get("embed_model")    or "text-embedding-3-small"
-    api_key  = key_store.get(provider) or key_store.get("openai")
-    logger.info("[embed_slot] Using provider=%s  model=%s  key_set=%s", provider, model, bool(api_key))
-    store   = FileStore(key_store.get("files_folder"), file_map=load_file_map())
-    content = store.get_content(slot_id)
-    logger.info("[embed_slot] File content retrieved  slot=%s  content_len=%d", slot_id, len(content))
-    return _build_embed_pipeline().index_file(slot_id, content)
+    set_embed_progress(slot_id, 0, 0, done=False)
+    try:
+        store   = FileStore(key_store.get("files_folder"), file_map=load_file_map())
+        content = store.get_content(slot_id)
+        logger.info("[embed_slot] content_len=%d  slot=%s", len(content), slot_id)
+
+        def on_progress(current: int, total: int, filename: str):
+            set_embed_progress(slot_id, current, total, done=False, file=filename)
+
+        if not _chroma_lock.acquire(timeout=120):
+            raise RuntimeError("Timed out waiting for embedding lock — another embed may still be running.")
+        try:
+            chunks = _build_embed_pipeline().index_file(slot_id, content, on_progress=on_progress)
+        finally:
+            _chroma_lock.release()
+
+        set_embed_progress(slot_id, chunks, chunks, done=True)
+        return chunks
+    except Exception:
+
+        set_embed_progress(slot_id, 0, 0, done=True)
+        raise
 
 
 def remove_slot_embeddings(slot_id: str):
     """Drop indexed chunks + status for a slot (best effort)."""
     try:
-        pipeline = _build_embed_pipeline()
-        pipeline._store.delete_by_filename(slot_id)
-        pipeline.remove_status(slot_id)
+        with _chroma_lock:
+            pipeline = _build_embed_pipeline()
+            pipeline._store.delete_by_filename(slot_id)
+            pipeline.remove_status(slot_id)
     except Exception as e:
         logger.warning("Could not remove embeddings for slot %s: %s", slot_id, e)
 

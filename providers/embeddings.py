@@ -31,25 +31,32 @@ class EmbeddingClient:
                     self.provider, self.model, bool(self._api_key))
 
     def embed(self, text: str) -> list[float]:
-        """Return a float embedding vector for the given text."""
-        logger.debug("[EmbeddingClient.embed] provider=%s  text_len=%d", self.provider, len(text))
+        """Return a float embedding vector for a single text."""
+        return self.embed_batch([text])[0]
+
+    def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        """Return embedding vectors for a list of texts in a single API call."""
+        if not texts:
+            return []
+        logger.info("[EmbeddingClient.embed_batch] provider=%s  count=%d", self.provider, len(texts))
         if self.provider == "openai":
-            return self._openai_embed(text)
+            return self._openai_embed_batch(texts)
         if self.provider == "ollama":
-            return self._ollama_embed(text)
+            # Ollama has no native batch endpoint — fall back to sequential
+            return [self._ollama_embed(t) for t in texts]
         raise ValueError(
             f"Unsupported embedding provider: {self.provider!r}. Use 'openai' or 'ollama'."
         )
 
-    def _openai_embed(self, text: str) -> list[float]:
+    def _openai_embed_batch(self, texts: list[str]) -> list[list[float]]:
         key = self._api_key or os.environ.get("OPENAI_API_KEY")
         if not key:
-            logger.error("[EmbeddingClient] No OpenAI API key — set it in Step 4 or as OPENAI_API_KEY env var")
+            logger.error("[EmbeddingClient] No OpenAI API key configured")
             raise RuntimeError("No OpenAI API key configured for embeddings.")
-        logger.debug("[EmbeddingClient] POST openai/embeddings  model=%s  text_len=%d", self.model, len(text))
+        logger.info("[EmbeddingClient] POST openai/embeddings  model=%s  count=%d", self.model, len(texts))
         resp = requests.post(
             f"{OPENAI_DEFAULT_BASE}/embeddings",
-            json={"input": text, "model": self.model},
+            json={"input": texts, "model": self.model},
             headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
             timeout=self._timeout,
         )
@@ -59,9 +66,10 @@ class EmbeddingClient:
             raise RuntimeError(
                 f"Embedding call failed ({resp.status_code}) for model '{self.model}': {resp.text}"
             )
-        vec = resp.json()["data"][0]["embedding"]
-        logger.debug("[EmbeddingClient] OpenAI embedding OK  dims=%d", len(vec))
-        return vec
+        data = sorted(resp.json()["data"], key=lambda x: x["index"])
+        logger.info("[EmbeddingClient] OpenAI embedding OK  dims=%d  count=%d",
+                    len(data[0]["embedding"]), len(data))
+        return [d["embedding"] for d in data]
 
     def _ollama_embed(self, text: str) -> list[float]:
         url = f"{self._ollama_host.rstrip('/')}/api/embeddings"

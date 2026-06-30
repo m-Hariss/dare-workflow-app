@@ -5,176 +5,207 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Dare Workflow Runner</title>
 <style>
+/* ── Dare brand tokens ── */
+:root {
+  --red:        #EE183C;
+  --blue:       #023572;
+  --gradient:   linear-gradient(92.18deg, #EE183C, #023572);
+  --bg:         #FDFFFF;
+  --text:       #0a0a0a;
+  --muted:      #737373;
+  --border:     #e5e5e5;
+}
+
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  background: #f5f5f7; color: #1d1d1f; min-height: 100vh;
+  background: var(--bg); color: var(--text); min-height: 100vh;
 }
-header {
-  background: #1d1d1f; color: #f5f5f7;
-  padding: 18px 32px; display: flex; align-items: center;
+
+/* ── Dare transitions ── */
+button, input, select, textarea, label.btn {
+  transition-property: color, background-color, border-color, text-decoration-color, fill, stroke;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms;
 }
-header h1 { font-size: 1.1rem; font-weight: 600; }
-header span { font-size: .78rem; opacity: .45; margin-left: 6px; }
-.ping { width: 8px; height: 8px; border-radius: 50%; background: #30d158; margin-left: auto; }
 
-main { max-width: 680px; margin: 36px auto; padding: 0 16px 80px; }
+.ping { display: none; }
 
-/* Step */
-.step { margin-bottom: 10px; }
+main { max-width: 900px; margin: 32px auto; padding: 0 24px 80px; }
+
+/* ── Steps ── */
+.step { margin-bottom: 8px; }
 .step-hd {
   display: flex; align-items: center; gap: 10px;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 .step-num {
-  width: 26px; height: 26px; border-radius: 50%;
-  background: #1d1d1f; color: #fff;
-  font-size: .75rem; font-weight: 700;
+  width: 24px; height: 24px; border-radius: 50%;
+  background: var(--gradient); color: #fff;
+  font-size: .72rem; font-weight: 700;
   display: flex; align-items: center; justify-content: center; flex-shrink: 0;
 }
-.step-hd h2 { font-size: .8rem; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: #6e6e73; }
+.step-hd h2 {
+  font-size: .72rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--muted);
+}
 
-/* Card */
+/* ── Cards ── */
 .card {
-  background: #fff; border-radius: 12px; margin-bottom: 8px;
-  overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.08);
+  background: #fff; border-radius: 10px; margin-bottom: 6px;
+  overflow: hidden; border: 1px solid var(--border);
 }
 .card-row {
-  display: flex; align-items: center; gap: 12px; padding: 14px 18px;
+  display: flex; align-items: center; gap: 12px; padding: 14px 16px;
 }
-.icon { font-size: 1.25rem; width: 32px; text-align: center; flex-shrink: 0; }
+.icon { font-size: 1.1rem; width: 28px; text-align: center; flex-shrink: 0; }
 .info { flex: 1; min-width: 0; }
-.info h3 { font-size: .88rem; font-weight: 600; margin-bottom: 2px; }
-.info p  { font-size: .76rem; color: #6e6e73; word-break: break-all; }
+.info h3 { font-size: .85rem; font-weight: 600; margin-bottom: 1px; color: var(--text); }
+.info p  { font-size: .74rem; color: var(--muted); word-break: break-all; }
 
-/* Tabs */
-.tabs { display: flex; gap: 2px; padding: 12px 18px 0; }
+/* ── Tabs ── */
+.tabs { display: flex; gap: 1px; padding: 12px 16px 0; border-bottom: 1px solid var(--border); }
 .tab {
-  border: none; background: #f1f1f4; color: #6e6e73;
-  padding: 6px 14px; border-radius: 8px 8px 0 0;
-  font-size: .82rem; font-weight: 500; cursor: pointer;
+  border: none; background: transparent; color: var(--muted);
+  padding: 7px 14px; border-radius: 6px 6px 0 0;
+  font-size: .8rem; font-weight: 500; cursor: pointer;
 }
-.tab.active { background: #fff; color: #1d1d1f; }
-.tab-body { padding: 14px 18px; }
+.tab.active { background: #fff; color: var(--text); border: 1px solid var(--border); border-bottom-color: #fff; }
+.tab-body { padding: 14px 16px; }
 .tab-body.hidden { display: none; }
 
-/* Inputs */
+/* ── Inputs ── */
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
 .row:last-child { margin-bottom: 0; }
 input[type=text], input[type=password], select, textarea {
   flex: 1; min-width: 0;
-  border: 1.5px solid #d2d2d7; border-radius: 8px;
-  padding: 8px 11px; font-size: .85rem; outline: none; background: #f9f9fb;
-  font-family: inherit;
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 7px 10px; font-size: .84rem; outline: none; background: var(--bg);
+  font-family: inherit; color: var(--text);
 }
-input:focus, select:focus, textarea:focus { border-color: #0071e3; background: #fff; }
+input:focus, select:focus, textarea:focus {
+  border-color: var(--red); background: #fff; box-shadow: 0 0 0 3px rgba(238,24,60,.1);
+}
 textarea { resize: vertical; min-height: 80px; font-family: inherit; }
 
-/* Buttons */
+/* ── Buttons ── */
 .btn {
-  border: none; border-radius: 8px; cursor: pointer;
-  font-size: .82rem; font-weight: 500; padding: 8px 15px;
-  transition: background .15s; white-space: nowrap;
+  border: none; border-radius: 6px; cursor: pointer;
+  font-size: .8rem; font-weight: 500; padding: 7px 14px;
+  white-space: nowrap; display: inline-flex; align-items: center; gap: 5px;
 }
-.btn:disabled { opacity: .45; cursor: not-allowed; }
-.btn-ghost  { background: #f1f1f4; color: #1d1d1f; }
-.btn-ghost:hover:not(:disabled) { background: #e3e3e8; }
-.btn-primary { background: #0071e3; color: #fff; }
-.btn-primary:hover:not(:disabled) { background: #0077ed; }
-.btn-danger  { background: #fff0f0; color: #d12f2f; }
-.btn-danger:hover:not(:disabled)  { background: #fde8e8; }
+.btn:disabled { opacity: .4; cursor: not-allowed; }
+.btn-ghost { background: var(--bg); color: var(--text); border: 1px solid var(--border); }
+.btn-ghost:hover:not(:disabled) { background: #f5f5f5; border-color: #d4d4d4; }
+.btn-primary { background: var(--red); color: #fff; border: 1px solid var(--red); }
+.btn-primary:hover:not(:disabled) { background: #d01535; border-color: #d01535; }
+.btn-danger  { background: transparent; color: var(--red); border: 1px solid #f9a8b4; }
+.btn-danger:hover:not(:disabled)  { background: #fff0f2; }
 .btn-run {
-  width: 100%; padding: 13px; font-size: 1rem; font-weight: 600;
-  background: #1d1d1f; color: #fff; border-radius: 10px;
-  border: none; cursor: pointer; transition: background .15s;
+  width: 100%; padding: 12px; font-size: .95rem; font-weight: 600;
+  background: var(--gradient); color: #fff; border-radius: 8px;
+  border: none; cursor: pointer;
 }
-.btn-run:hover:not(:disabled) { background: #3a3a3c; }
+.btn-run:hover:not(:disabled) { opacity: .9; }
 .btn-run:disabled { opacity: .4; cursor: not-allowed; }
 
-/* Badges */
+/* ── Badges ── */
 .badge {
-  display: inline-block; font-size: .7rem; font-weight: 600;
-  padding: 2px 8px; border-radius: 20px; margin-right: 4px;
+  display: inline-flex; align-items: center;
+  font-size: .68rem; font-weight: 600;
+  padding: 2px 7px; border-radius: 999px; margin-right: 4px;
+  white-space: nowrap;
 }
-.ok   { background: #d1f9e0; color: #1a7f3c; }
-.warn { background: #fff3cd; color: #856404; }
-.miss { background: #f1f1f4; color: #6e6e73; }
-.err  { background: #ffe5e5; color: #d12f2f; }
+.ok   { background: #dcfce7; color: #15803d; }
+.warn { background: #fef9c3; color: #a16207; }
+.miss { background: #f4f4f5; color: var(--muted); }
+.err  { background: #fee2e2; color: var(--red); }
 
-/* File list */
-.flist { padding: 0 18px 14px; }
+/* ── File list ── */
+.flist { padding: 0 16px 12px; }
 .frow  {
-  display: flex; align-items: center; gap: 8px; padding: 6px 0;
-  border-bottom: 1px solid #f1f1f4; font-size: .82rem;
+  display: flex; align-items: center; gap: 8px; padding: 7px 0;
+  border-bottom: 1px solid var(--border); font-size: .8rem;
 }
 .frow:last-child { border-bottom: none; }
-.fname { flex: 1; font-family: "SF Mono", ui-monospace, monospace; font-size: .78rem; }
-.fmeta { color: #aeaeb2; font-size: .72rem; white-space: nowrap; }
-.fempty { font-size: .82rem; color: #aeaeb2; padding: 8px 0; }
+.fname { flex: 1; font-family: "SF Mono", ui-monospace, monospace; font-size: .76rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fmeta { color: var(--muted); font-size: .7rem; white-space: nowrap; }
+.fempty { font-size: .8rem; color: var(--muted); padding: 6px 0; }
 
-/* Workflow info */
-.wf-info { padding: 14px 18px; }
-.wf-title { font-size: 1rem; font-weight: 700; margin-bottom: 4px; }
-.wf-desc  { font-size: .82rem; color: #6e6e73; margin-bottom: 12px; }
-.wf-steps { margin-bottom: 12px; }
-.wf-step  {
-  display: flex; gap: 10px; padding: 8px 0;
-  border-bottom: 1px solid #f1f1f4;
-}
-.wf-step:last-child { border-bottom: none; }
-.wf-step-label { font-size: .82rem; font-weight: 600; min-width: 90px; }
-.wf-step-model { font-size: .75rem; color: #6e6e73; }
-.wf-step-prompt {
-  font-size: .75rem; color: #aeaeb2; font-family: "SF Mono", ui-monospace, monospace;
-  margin-top: 2px; white-space: pre-wrap; word-break: break-word;
-}
-.wf-needs { display: flex; gap: 6px; flex-wrap: wrap; }
+/* ── Workflow info ── */
+.wf-info { padding: 14px 16px; }
+.wf-title { font-size: .95rem; font-weight: 700; margin-bottom: 3px; }
+.wf-desc  { font-size: .78rem; color: var(--muted); }
 
-/* Results */
+/* ── Results ── */
 .result-card {
-  background: #fff; border-radius: 10px; margin-bottom: 8px;
-  overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.08);
+  background: #fff; border-radius: 8px; margin-bottom: 6px;
+  overflow: hidden; border: 1px solid var(--border);
 }
 .result-hd {
   display: flex; align-items: center; gap: 8px;
-  padding: 11px 16px; cursor: pointer; user-select: none;
+  padding: 11px 14px; cursor: pointer; user-select: none;
 }
 .result-hd:hover { background: #fafafa; }
-.result-type { font-size: .7rem; font-weight: 600; color: #6e6e73; text-transform: uppercase; }
-.result-label { flex: 1; font-size: .88rem; font-weight: 600; }
-.result-body {
-  padding: 0 16px 14px; display: none;
-}
+.result-type { font-size: .67rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.result-label { flex: 1; font-size: .85rem; font-weight: 600; }
+.result-body  { padding: 0 14px 12px; display: none; }
 .result-body.open { display: block; }
 .result-out {
-  white-space: pre-wrap; font-size: .82rem; line-height: 1.6;
-  background: #f9f9fb; border-radius: 8px; padding: 10px 12px;
-  font-family: inherit; word-break: break-word;
+  white-space: pre-wrap; font-size: .8rem; line-height: 1.6;
+  background: var(--bg); border-radius: 6px; padding: 10px 12px;
+  font-family: inherit; word-break: break-word; border: 1px solid var(--border);
 }
-.result-err { color: #d12f2f; }
-.result-skip { color: #aeaeb2; font-style: italic; }
+.result-err  { color: var(--red); }
+.result-skip { color: var(--muted); font-style: italic; }
+.result-md { font-size: .85rem; line-height: 1.7; word-break: break-word; padding: 4px 0; }
+.result-md h1,.result-md h2,.result-md h3 { font-weight: 700; margin: 1em 0 .35em; color: var(--blue); }
+.result-md h1 { font-size: 1.15rem; }
+.result-md h2 { font-size: 1rem; }
+.result-md h3 { font-size: .9rem; }
+.result-md p  { margin: .35em 0; }
+.result-md ul,.result-md ol { padding-left: 1.4em; margin: .4em 0; }
+.result-md li { margin: .2em 0; }
+.result-md hr { border: none; border-top: 1px solid var(--border); margin: .8em 0; }
+.result-md strong { font-weight: 700; }
+.result-md em { font-style: italic; }
+.result-md code { background: #f0f0f0; border-radius: 3px; padding: .1em .35em; font-size: .82em; font-family: monospace; }
+.result-md pre.md-code { background: #f7f7f8; border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; overflow-x: auto; font-size: .8rem; font-family: monospace; margin: .5em 0; white-space: pre-wrap; word-break: break-word; }
 
-/* Msg */
-.msg { font-size: .76rem; margin-top: 6px; }
-.msg.ok  { color: #1a7f3c; }
-.msg.err { color: #d12f2f; }
+/* ── Messages ── */
+.msg { font-size: .74rem; margin-top: 6px; }
+.msg.ok  { color: #15803d; }
+.msg.err { color: var(--red); }
 
-/* Divider */
-.divider { height: 1px; background: #e5e5ea; margin: 6px 0; }
+/* ── Divider / index bar ── */
+.divider { height: 1px; background: var(--border); margin: 4px 0; }
+.ibar { display: flex; justify-content: space-between; align-items: center; padding: 11px 16px; }
+.ibar span { font-size: .8rem; color: var(--muted); }
 
-/* Index bar */
-.ibar { display: flex; justify-content: space-between; align-items: center; padding: 12px 18px; }
-.ibar span { font-size: .82rem; color: #6e6e73; }
+/* ── Navbar ── */
+nav {
+  background: var(--bg); border-bottom: 1px solid var(--border);
+  padding: 0 32px; display: flex; align-items: center; height: 56px; gap: 16px;
+}
+.nav-logo {
+  font-size: .95rem; font-weight: 700; letter-spacing: -.02em;
+  background: var(--gradient); -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text; white-space: nowrap;
+}
+.nav-divider { width: 1px; height: 20px; background: var(--border); flex-shrink: 0; }
+.nav-tagline { font-size: .82rem; color: var(--muted); }
 </style>
 </head>
 <body>
-<header>
-  <h1>Dare Workflow Runner <span>SyftBox</span></h1>
-  <div class="ping" id="pingDot"></div>
-</header>
+<nav>
+  <span class="nav-logo">Dare Runner</span>
+  <div class="nav-divider"></div>
+  <span class="nav-tagline">Run your workflows with data of your choice</span>
+</nav>
 <main id="main">
 
-  <!-- ① Workflow ─────────────────────────────────── -->
+  <!-- ① Workflow -->
   <div class="step" id="step1">
     <div class="step-hd"><div class="step-num">1</div><h2>Workflow</h2></div>
 
@@ -189,7 +220,7 @@ textarea { resize: vertical; min-height: 80px; font-family: inherit; }
             Choose file
             <input type="file" accept=".json" style="display:none" onchange="uploadWorkflow(this)">
           </label>
-          <span id="uploadName" style="font-size:.82rem;color:#aeaeb2">No file chosen</span>
+          <span id="uploadName" style="font-size:.8rem;color:#a1a1aa">No file chosen</span>
         </div>
         <div class="msg" id="uploadMsg"></div>
       </div>
@@ -211,78 +242,27 @@ textarea { resize: vertical; min-height: 80px; font-family: inherit; }
     </div>
   </div>
 
-  <!-- ② LLM Keys ─────────────────────────────────── -->
+  <!-- ② LLM Keys — only required providers are shown -->
   <div class="step" id="step2" style="display:none">
     <div class="step-hd"><div class="step-num">2</div><h2>LLM Keys</h2></div>
     <div id="keysSection"></div>
   </div>
 
-  <!-- ③ Files ──────────────────────────────────────── -->
+  <!-- ③ Files -->
   <div class="step" id="step3" style="display:none">
     <div class="step-hd"><div class="step-num">3</div><h2>Files</h2></div>
 
-    <!-- Required file slots -->
+    <!-- Slot uploads — multiple files per slot -->
     <div class="card">
       <div class="flist" id="slotList"><p class="fempty">Loading…</p></div>
     </div>
 
-    <!-- Files folder (optional fallback) -->
-    <div class="card">
-      <div class="card-row">
-        <div class="icon">📁</div>
-        <div class="info">
-          <h3>Files folder</h3>
-          <p id="folderPath" style="color:#aeaeb2;font-size:.76rem">Not set</p>
-        </div>
-        <button class="btn btn-ghost" onclick="toggleFolderEdit()">Set</button>
-      </div>
-      <div class="tab-body hidden" id="folderEdit">
-        <div class="row">
-          <input type="text" id="folderInput" placeholder="/Users/you/project-files/">
-          <button class="btn btn-primary" onclick="saveFolder()">Save</button>
-        </div>
-        <div class="msg" id="folderMsg"></div>
-      </div>
-    </div>
   </div>
 
-  <!-- ④ Search ───────────────────────────────────── -->
-  <div class="step" id="step4" style="display:none">
-    <div class="step-hd"><div class="step-num">4</div><h2>Search</h2></div>
-    <div class="card">
-      <div class="card-row">
-        <div class="icon">🔍</div>
-        <div class="info">
-          <h3>Search model</h3>
-          <p id="embedInfo" style="color:#aeaeb2">Loading…</p>
-        </div>
-        <button class="btn btn-ghost" onclick="toggleEmbedEdit()">Configure</button>
-      </div>
-      <div class="tab-body hidden" id="embedEdit">
-        <div class="row">
-          <select id="embedProvider" onchange="updateEmbedPlaceholder()">
-            <option value="openai">OpenAI</option>
-            <option value="ollama">Ollama</option>
-          </select>
-          <input type="text" id="embedModel" placeholder="text-embedding-3-small">
-          <button class="btn btn-primary" onclick="saveEmbed()">Save</button>
-        </div>
-        <div class="msg" id="embedMsg"></div>
-      </div>
-    </div>
-    <div class="card">
-      <div class="ibar">
-        <span id="indexSummary">No files indexed yet</span>
-        <button class="btn btn-primary" id="indexBtn" onclick="indexFiles()">Index All Files</button>
-      </div>
-      <div class="flist" id="indexList"></div>
-    </div>
-  </div>
-
-  <!-- ⑤ Run ───────────────────────────────────────── -->
+  <!-- ④ Run -->
   <div class="step" id="step5" style="display:none">
-    <div class="step-hd"><div class="step-num">5</div><h2>Run</h2></div>
-    <div class="card" style="padding:16px 18px">
+    <div class="step-hd"><div class="step-num">4</div><h2>Run</h2></div>
+    <div class="card" style="padding:16px">
       <div id="userInputWrap" style="display:none;margin-bottom:12px">
         <textarea id="userInput" placeholder="Enter your input here…"></textarea>
       </div>
@@ -290,9 +270,9 @@ textarea { resize: vertical; min-height: 80px; font-family: inherit; }
       <div class="msg" id="runMsg" style="margin-top:8px"></div>
     </div>
 
-    <div id="results" style="display:none;margin-top:16px">
+    <div id="results" style="display:none;margin-top:14px">
       <div class="step-hd" style="margin-bottom:8px">
-        <div class="step-num" id="resultStatus" style="background:#30d158">✓</div>
+        <div class="step-num" id="resultStatus" style="background:#22c55e">✓</div>
         <h2 id="resultTitle">Results</h2>
       </div>
       <div id="resultNodes"></div>
@@ -302,26 +282,25 @@ textarea { resize: vertical; min-height: 80px; font-family: inherit; }
 </main>
 
 <script>
-/* ── State ─────────────────────────────────────────── */
+/* ── State ── */
 let wfInfo = null;
+
 const PROVIDER_LABELS = { openai:"OpenAI", claude:"Anthropic (Claude)", gemini:"Google Gemini", ollama:"Ollama" };
 const PROVIDER_ICONS  = { openai:"⚡", claude:"🧠", gemini:"✨", ollama:"🦙" };
 const PROVIDER_PH     = { openai:"sk-...", claude:"sk-ant-...", gemini:"AIza...", ollama:"http://localhost:11434" };
-const EMBED_DEFAULTS  = { openai:"text-embedding-3-small", ollama:"nomic-embed-text" };
 
-/* ── Tabs (upload / path) ──────────────────────────── */
+/* ── Tabs ── */
 function switchTab(name) {
   document.querySelectorAll(".tab").forEach((t,i) => t.classList.toggle("active", ["upload","path"][i] === name));
   document.getElementById("tab-upload").classList.toggle("hidden", name !== "upload");
   document.getElementById("tab-path").classList.toggle("hidden", name !== "path");
 }
 
-/* ── Workflow loading ──────────────────────────────── */
+/* ── Workflow loading ── */
 async function uploadWorkflow(input) {
   const file = input.files[0];
   if (!file) return;
   document.getElementById("uploadName").textContent = file.name;
-  // Send the JSON text in a JSON body (not multipart) so it works over the SyftBox RPC transport.
   const content = await file.text();
   const r = await fetch("/workflow/upload", {
     method: "POST", headers: {"Content-Type":"application/json"},
@@ -335,7 +314,6 @@ async function uploadWorkflow(input) {
   } else showMsg("uploadMsg", d.detail || "Error", true);
 }
 
-// Read a File as base64 (without the data: prefix) for JSON-safe upload.
 function fileToBase64(file) {
   return new Promise((resolve, reject) => {
     const r = new FileReader();
@@ -365,12 +343,12 @@ async function clearWorkflow() {
   wfInfo = null;
   document.getElementById("wfCard").style.display = "none";
   document.getElementById("loadCard").style.display = "";
-  ["step2","step3","step4","step5"].forEach(id => document.getElementById(id).style.display = "none");
+  ["step2","step3","step5"].forEach(id => document.getElementById(id).style.display = "none");
   document.getElementById("results").style.display = "none";
   document.getElementById("slotList").innerHTML = '<p class="fempty">Loading…</p>';
 }
 
-/* ── Render workflow info ──────────────────────────── */
+/* ── Workflow info ── */
 function renderWorkflow(info) {
   wfInfo = info;
   document.getElementById("wfMeta").innerHTML =
@@ -378,34 +356,33 @@ function renderWorkflow(info) {
   document.getElementById("wfCard").style.display = "";
 }
 
-/* ── LLM Keys ──────────────────────────────────────── */
+/* ── LLM Keys — only required providers ── */
 function renderKeys(status) {
   const required = wfInfo ? wfInfo.required_providers : [];
   const el = document.getElementById("keysSection");
   el.innerHTML = "";
 
-  // Show required providers first, then the rest dimmed
-  const all = ["openai","claude","gemini","ollama"];
-  const ordered = [...required, ...all.filter(p => !required.includes(p))];
+  // Show only the providers the workflow actually needs.
+  // If the workflow needs nothing (e.g. local-only), show a note.
+  if (!required.length) {
+    el.innerHTML = `<div class="card"><div class="card-row"><div class="info"><p>No LLM provider required by this workflow.</p></div></div></div>`;
+    return;
+  }
 
-  ordered.forEach(id => {
+  required.forEach(id => {
     const info = status[id] || { configured:false, source:null };
-    const isRequired = required.includes(id);
     const card = document.createElement("div");
     card.className = "card";
-    card.style.opacity = isRequired ? "1" : "0.5";
-    let badge = info.configured
-      ? (info.source==="env"
+    const badge = info.configured
+      ? (info.source === "env"
           ? '<span class="badge warn">Via env</span>'
           : '<span class="badge ok">Configured ✓</span>')
-      : (isRequired
-          ? '<span class="badge err">Required — not set</span>'
-          : '<span class="badge miss">Not set</span>');
+      : '<span class="badge err">Required — not set</span>';
     card.innerHTML = `
       <div class="card-row">
         <div class="icon">${PROVIDER_ICONS[id]||"🔑"}</div>
         <div class="info"><h3>${PROVIDER_LABELS[id]||id}</h3>${badge}</div>
-        <button class="btn btn-ghost" onclick="toggleKey('${id}')">${info.configured?"Update":"Add"}</button>
+        <button class="btn btn-ghost" onclick="toggleKey('${id}')">${info.configured?"Update":"Add key"}</button>
       </div>
       <div class="tab-body hidden" id="key-${id}">
         <div class="row">
@@ -443,14 +420,9 @@ async function refreshKeys() {
   renderKeys(s);
 }
 
-/* ── File Slots ────────────────────────────────────── */
+/* ── File Slots ── */
 function slotRowId(id){ return "slot_" + String(id).replace(/[^a-zA-Z0-9]/g,"_"); }
-// Escape a value for use inside a single-quoted JS string in an inline HTML handler.
 function jsAttr(s){ return String(s).replace(/\\/g,"\\\\").replace(/'/g,"\\'"); }
-function slotIsEmbed(id){
-  const s = (wfInfo && wfInfo.required_files || []).find(x => x.id === id);
-  return s && (s.usage || "").indexOf("embed") !== -1;
-}
 
 async function refreshSlots() {
   const required = wfInfo ? wfInfo.required_files : [];
@@ -459,76 +431,129 @@ async function refreshSlots() {
   const slots = await fetch("/files/slots").then(r=>r.json());
   const el = document.getElementById("slotList");
 
+  const stepPromptMap = {};
+  (wfInfo.steps || []).forEach(st => { if (st.prompt) stepPromptMap[st.id] = st.prompt; });
+
   el.innerHTML = required.map(s => {
     const id    = s.id;
     const label = s.label || s.id;
     const embed = (s.usage || "").indexOf("embed") !== -1;
     const slot  = slots[id];
-    const mapped = slot && slot.exists;
-    const indexed = mapped && slot.indexed;
+    const count = slot ? slot.count : 0;
+    const indexed = slot && slot.indexed;
     const rid = slotRowId(id);
-    return `<div class="frow" id="${rid}">
-      <span class="fname">${esc(label)}${embed ? ' <span class="fmeta">· will be embedded</span>' : ''}</span>
-      <span class="fmeta" style="display:flex;align-items:center;gap:6px">
-        <span id="${rid}_status" style="display:flex;align-items:center;gap:6px">
-        ${mapped
-          ? `<span class="badge ok">✓ ${esc(slot.filename)}</span>`
-          : `<span class="badge err">not uploaded</span>`}
-        ${indexed ? `<span class="badge ok">🔍 ${slot.chunks} chunks</span>`
-                  : (mapped && embed ? `<span class="badge warn">not embedded</span>` : "")}
+
+    const promptText = stepPromptMap[id] || "";
+    const promptHtml = promptText
+      ? `<div style="font-size:.74rem;color:#888;line-height:1.45;margin-top:3px;white-space:normal;word-break:break-word;overflow-wrap:anywhere">${esc(promptText.length > 160 ? promptText.slice(0, 160) + "…" : promptText)}</div>`
+      : "";
+
+    // File badges — one per uploaded file
+    const fileBadges = slot && slot.files
+      ? slot.files.filter(f=>f.exists).map(f=>`<span class="badge ok">✓ ${esc(f.filename)}</span>`).join("")
+      : `<span class="badge err">not uploaded</span>`;
+
+    return `<div class="frow" id="${rid}" style="flex-direction:column;align-items:stretch;gap:6px;padding:10px 0">
+      <div style="min-width:0">
+        <span class="fname">
+          ${esc(label)}${embed ? ' <span class="fmeta">· will be embedded</span>' : ''}
         </span>
-        <label class="btn btn-ghost" style="font-size:.72rem;padding:4px 10px;cursor:pointer;margin:0">
-          ${mapped ? "Replace" : "Upload"}
-          <input type="file" style="display:none" onchange="uploadSlotFile('${jsAttr(id)}', this)">
-        </label>
-        ${mapped ? `<button class="btn btn-danger" style="font-size:.72rem;padding:4px 8px;margin:0" onclick="removeSlot('${jsAttr(id)}')">×</button>` : ""}
-      </span>
+        ${promptHtml}
+      </div>
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:5px">
+        <span id="${rid}_status" style="display:flex;flex-wrap:wrap;align-items:center;gap:5px;flex:1">
+          ${count ? fileBadges : '<span class="badge err">not uploaded</span>'}
+          ${indexed ? `<span class="badge ok">🔍 ${slot.chunks} chunks</span>`
+                    : (count && embed ? `<span class="badge warn">not embedded</span>` : "")}
+        </span>
+        <span style="display:flex;gap:5px;flex-shrink:0">
+          <label class="btn btn-ghost" style="font-size:.72rem;padding:4px 10px;cursor:pointer;margin:0">
+            + Add file${count ? 's' : ''}
+            <input type="file" multiple style="display:none" onchange="uploadSlotFiles('${jsAttr(id)}', this)">
+          </label>
+          ${count ? `<button class="btn btn-danger" style="font-size:.72rem;padding:4px 8px;margin:0" onclick="removeSlot('${jsAttr(id)}')">Clear</button>` : ""}
+        </span>
+      </div>
     </div>`;
   }).join("");
 }
 
-async function uploadSlotFile(slotName, input) {
-  const file = input.files[0];
-  if (!file) return;
+async function uploadSlotFiles(slotName, input) {
+  const files = Array.from(input.files);
+  if (!files.length) return;
 
   const statusEl = document.getElementById(slotRowId(slotName) + "_status");
   const setStatus = html => { if (statusEl) statusEl.innerHTML = html; };
+  let needsEmbed = false;
 
-  // Phase 1: uploading
-  setStatus(`<span class="badge warn">⏳ Uploading…</span><span class="fmeta">${esc(file.name)}</span>`);
-  try {
-    const content_b64 = await fileToBase64(file);
-    const r = await fetch("/files/slot", {
-      method: "POST", headers: {"Content-Type":"application/json"},
-      body: JSON.stringify({ slot: slotName, filename: file.name, content_b64 }),
-    });
-    if (!r.ok) { setStatus(`<span class="badge err">✗ upload failed</span>`); return; }
-    const d = await r.json();
-
-    if (!d.needs_embedding) {
-      setStatus(`<span class="badge ok">✓ uploaded</span>`);
-      await refreshSlots();
+  // Upload each file sequentially
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    setStatus(`<span class="badge warn">⏳ Uploading ${i+1}/${files.length} — ${esc(file.name)}</span>`);
+    try {
+      const content_b64 = await fileToBase64(file);
+      const r = await fetch("/files/slot", {
+        method: "POST", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({ slot: slotName, filename: file.name, content_b64 }),
+      });
+      if (!r.ok) { setStatus(`<span class="badge err">✗ upload failed</span>`); return; }
+      const d = await r.json();
+      if (d.needs_embedding) needsEmbed = true;
+    } catch(e) {
+      setStatus(`<span class="badge err">✗ upload failed</span>`);
       return;
     }
+  }
 
-    // Phase 2: generating embeddings
-    setStatus(`<span class="badge ok">✓ uploaded</span><span class="badge warn">⏳ Generating embeddings…</span>`);
+  if (!needsEmbed) {
+    await refreshSlots();
+    return;
+  }
+
+  // Embed all files in the slot (concatenated) in one pass, polling for progress
+  const uploadedLabel = `✓ ${files.length} file${files.length>1?'s':''} uploaded`;
+  setStatus(`<span class="badge ok">${uploadedLabel}</span><span class="badge warn">⏳ Embedding…</span>`);
+
+  // Poll progress every 600 ms while embed runs; give up after 3 minutes.
+  const embedAbort = new AbortController();
+  let pollTicks = 0;
+  const pollTimer = setInterval(async () => {
+    pollTicks++;
+    if (pollTicks > 300) {
+      clearInterval(pollTimer);
+      embedAbort.abort();
+      setStatus(`<span class="badge warn">✓ uploaded · embedding timed out — check server logs</span>`);
+      return;
+    }
+    try {
+      const pr = await fetch("/files/slot/embed/progress/" + encodeURIComponent(slotName));
+      const pd = await pr.json();
+      const label = pd.done
+        ? `🔍 ${pd.total} chunks indexed`
+        : `⏳ Embedding ${pd.total > 0 ? pd.total + " chunks" : "…"}`;
+      const cls = pd.done ? "ok" : "warn";
+      setStatus(`<span class="badge ok">${uploadedLabel}</span><span class="badge ${cls}">${label}</span>`);
+    } catch(_) {}
+  }, 600);
+
+  try {
     const er = await fetch("/files/slot/embed", {
       method: "POST", headers: {"Content-Type":"application/json"},
       body: JSON.stringify({ slot: slotName }),
+      signal: embedAbort.signal,
     });
+    clearInterval(pollTimer);
     const ed = await er.json();
     if (ed.embedded) {
-      setStatus(`<span class="badge ok">✓ uploaded</span><span class="badge ok">🔍 ${ed.chunks} chunks · embeddings ready</span>`);
+      setStatus(`<span class="badge ok">${uploadedLabel}</span><span class="badge ok">🔍 ${ed.chunks} chunks</span>`);
     } else {
       setStatus(`<span class="badge ok">✓ uploaded</span><span class="badge warn">not embedded</span>`);
-      if (ed.embed_error) {
-        alert("File uploaded, but embedding failed:\n\n" + ed.embed_error +
-              "\n\nSet your embedding key (step 4), then re-upload.");
-      }
+      if (ed.embed_error) alert("Uploaded, but embedding failed:\n\n" + ed.embed_error + "\n\nCheck your OpenAI key in step 2.");
     }
-  } catch (e) {
-    setStatus(`<span class="badge err">✗ upload failed</span>`);
+  } catch(e) {
+    clearInterval(pollTimer);
+    if (e.name !== "AbortError")
+      setStatus(`<span class="badge warn">✓ uploaded · embedding failed</span>`);
   }
   await refreshSlots();
 }
@@ -538,96 +563,8 @@ async function removeSlot(slotName) {
   await refreshSlots();
 }
 
-/* ── Files Folder (fallback) ───────────────────────── */
-async function refreshFolder() {
-  const cfg = await fetch("/config").then(r=>r.json());
-  const el = document.getElementById("folderPath");
-  if (cfg.files_folder) {
-    el.textContent = cfg.files_folder;
-    el.style.color = cfg.files_folder_valid ? "#1d1d1f" : "#d12f2f";
-    if (!cfg.files_folder_valid) el.textContent += " ⚠ not found";
-  } else {
-    el.textContent = "Not set";
-    el.style.color = "#aeaeb2";
-  }
-}
 
-function toggleFolderEdit() {
-  document.getElementById("folderEdit").classList.toggle("hidden");
-}
-
-async function saveFolder() {
-  const val = document.getElementById("folderInput").value.trim();
-  if (!val) { showMsg("folderMsg","Enter a path.",true); return; }
-  const r = await fetch("/keys",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:"files_folder",key:val})});
-  if (r.ok) {
-    showMsg("folderMsg","Saved!",false);
-    setTimeout(() => { document.getElementById("folderEdit").classList.add("hidden"); refreshFolder(); }, 800);
-  } else showMsg("folderMsg","Error.",true);
-}
-
-/* ── Embeddings ───────────────────────────────────── */
-function updateEmbedPlaceholder() {
-  const p = document.getElementById("embedProvider").value;
-  document.getElementById("embedModel").placeholder = EMBED_DEFAULTS[p]||"model-name";
-}
-
-function toggleEmbedEdit() {
-  document.getElementById("embedEdit").classList.toggle("hidden");
-}
-
-async function refreshEmbed() {
-  const cfg = await fetch("/config").then(r=>r.json());
-  document.getElementById("embedInfo").textContent = cfg.embed_provider+" / "+cfg.embed_model;
-  document.getElementById("embedInfo").style.color = "#1d1d1f";
-  document.getElementById("embedProvider").value = cfg.embed_provider;
-  document.getElementById("embedModel").value    = cfg.embed_model;
-  refreshIndexStatus();
-}
-
-async function saveEmbed() {
-  const p = document.getElementById("embedProvider").value;
-  const m = document.getElementById("embedModel").value.trim()||EMBED_DEFAULTS[p];
-  await fetch("/keys",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:"embed_provider",key:p})});
-  await fetch("/keys",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:"embed_model",key:m})});
-  showMsg("embedMsg","Saved! Re-index to apply.",false);
-  setTimeout(()=>{ document.getElementById("embedEdit").classList.add("hidden"); refreshEmbed(); },1500);
-}
-
-async function indexFiles() {
-  const btn = document.getElementById("indexBtn");
-  const summary = document.getElementById("indexSummary");
-  btn.disabled=true; btn.textContent="Indexing…";
-  summary.textContent = "⏳ Indexing files in your files folder… this can take a moment.";
-  try {
-    const r    = await fetch("/index",{method:"POST"});
-    const data = await r.json();
-    if (data.error) {
-      summary.textContent = "⚠ " + data.error;
-      return;
-    }
-    await refreshIndexStatus();
-    const failed = data.failed.length ? ` · ${data.failed.length} failed` : "";
-    summary.textContent = `✓ Indexed ${data.indexed.length} file(s) · ${data.total_chunks} chunks${failed}`;
-  } catch(e){
-    summary.textContent = "✗ Indexing failed or timed out — try again, or use “Open in new tab”.";
-  } finally {
-    btn.disabled=false; btn.textContent="Index All Files";
-  }
-}
-
-async function refreshIndexStatus() {
-  const d = await fetch("/index/status").then(r=>r.json());
-  const entries = Object.entries(d);
-  document.getElementById("indexSummary").textContent =
-    entries.length ? entries.length+" file(s) indexed in ChromaDB" : "No files indexed yet";
-  const el = document.getElementById("indexList");
-  el.innerHTML = entries.length
-    ? entries.map(([n,i])=>`<div class="frow"><span class="fname">${esc(n)}</span><span class="fmeta">${i.chunks} chunks · ${i.model}</span></div>`).join("")
-    : "";
-}
-
-/* ── Run ──────────────────────────────────────────── */
+/* ── Run ── */
 function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
 
 async function runWorkflow() {
@@ -643,12 +580,11 @@ async function runWorkflow() {
   }
 
   try {
-    // Kick off the run — returns immediately with a run_id; we poll for the result.
     const r    = await fetch("/run",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
     const data = await r.json();
     if (data.error)   { showMsg("runMsg", data.error, true); return; }
-    if (!data.run_id) { renderResults(data); return; }   // (back-compat with a sync response)
-    showMsg("runMsg", "Started… running workflow", false);
+    if (!data.run_id) { renderResults(data); return; }
+    showMsg("runMsg", "Running workflow…", false);
     await pollRun(data.run_id, btn);
   } catch(e) { showMsg("runMsg","Request failed: "+e, true); }
   finally { btn.disabled=false; btn.textContent="Run Workflow"; }
@@ -661,14 +597,14 @@ async function pollRun(runId, btn) {
     try {
       s = await fetch("/run/"+encodeURIComponent(runId)).then(r=>r.json());
     } catch(e) {
-      showMsg("runMsg", "Still running… (waiting for the server)", false);
-      continue;   // transient poll failure — keep waiting
+      showMsg("runMsg", "Waiting for server…", false);
+      continue;
     }
     if (s.error && s.status !== "running") { showMsg("runMsg", s.error, true); return; }
     if (s.progress) {
       const {done, total} = s.progress;
       btn.textContent = `Running… ${done}/${total}`;
-      showMsg("runMsg", `Running… step ${done} of ${total}`, false);
+      showMsg("runMsg", `Step ${done} of ${total}`, false);
     }
     if (s.status !== "running") {
       if (s.result) { document.getElementById("runMsg").textContent=""; renderResults(s.result); }
@@ -681,40 +617,39 @@ async function pollRun(runId, btn) {
 function renderResults(data) {
   const ok = data.status === "completed";
   document.getElementById("resultStatus").textContent = ok ? "✓" : "✗";
-  document.getElementById("resultStatus").style.background = ok ? "#30d158" : "#ff453a";
+  document.getElementById("resultStatus").style.background = ok ? "linear-gradient(92.18deg,#EE183C,#023572)" : "#EE183C";
   document.getElementById("resultTitle").textContent = ok ? "Completed" : "Failed";
 
   const nodes = data.node_results || {};
   const el = document.getElementById("resultNodes");
   el.innerHTML = Object.entries(nodes).map(([id,n]) => {
-    const status = n.status;
+    if (n.status === "skipped") return "";
     const output = n.output || n.error || "";
     const label  = n.label || id;
     const type   = n.type  || "";
-    if (status === "skipped") return "";
-    const badge = status === "completed"
+    const badge  = n.status === "completed"
       ? '<span class="badge ok">✓ done</span>'
-      : status === "failed"
+      : n.status === "failed"
       ? '<span class="badge err">✗ failed</span>'
       : '<span class="badge miss">skipped</span>';
-
     return `<div class="result-card">
       <div class="result-hd" onclick="toggleResult('${id}')">
         <span class="result-type">${esc(type)}</span>
         <span class="result-label">${esc(label)}</span>
         ${badge}
-        <span style="color:#aeaeb2;font-size:.8rem">▾</span>
+        <span style="color:#a1a1aa;font-size:.75rem">▾</span>
       </div>
       <div class="result-body" id="rb-${id}">
         ${output
-          ? `<pre class="result-out ${status==="failed"?"result-err":""}">${esc(output)}</pre>`
+          ? n.status === "failed"
+            ? `<pre class="result-out result-err">${esc(output)}</pre>`
+            : `<div class="result-md">${renderMarkdown(output)}</div>`
           : `<p class="result-skip">No output</p>`}
       </div>
     </div>`;
   }).join("");
 
   document.getElementById("results").style.display = "";
-  // Auto-open the last completed node
   const ids = Object.keys(nodes);
   if (ids.length) toggleResult(ids[ids.length-1]);
 }
@@ -723,14 +658,13 @@ function toggleResult(id) {
   document.getElementById("rb-"+id)?.classList.toggle("open");
 }
 
-/* ── Full refresh ─────────────────────────────────── */
+/* ── Full refresh ── */
 async function refreshAll() {
   const info = await fetch("/workflow/info").then(r=>r.json());
-  if (!info || !info.title) {
-    // No workflow loaded
+  if (!info || !info.node_count) {
     document.getElementById("wfCard").style.display = "none";
     document.getElementById("loadCard").style.display = "";
-    ["step2","step3","step4","step5"].forEach(id=>document.getElementById(id).style.display="none");
+    ["step2","step3","step5"].forEach(id=>document.getElementById(id).style.display="none");
     return;
   }
 
@@ -742,34 +676,74 @@ async function refreshAll() {
   if (info.needs_files) {
     document.getElementById("step3").style.display = "";
     await refreshSlots();
-    await refreshFolder();
   }
 
-  if (info.needs_embeddings) {
-    document.getElementById("step4").style.display = "";
-    await refreshEmbed();
-  }
-
-  // Run section
   document.getElementById("step5").style.display = "";
   document.getElementById("userInputWrap").style.display = info.has_user_input ? "" : "none";
 }
 
-/* ── Helpers ──────────────────────────────────────── */
+/* ── Helpers ── */
 function esc(s){ const d=document.createElement("div"); d.textContent=String(s||""); return d.innerHTML; }
-function fmt(b){ return b<1024?b+" B":b<1048576?(b/1024).toFixed(1)+" KB":(b/1048576).toFixed(1)+" MB"; }
-function truncate(s,n){ return s.length>n?s.slice(0,n)+"…":s; }
+
+function renderMarkdown(md) {
+  const e = s => s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  // Protect fenced code blocks
+  const blocks = [];
+  md = md.replace(/```[\s\S]*?```/g, m => {
+    const inner = m.slice(3,-3).replace(/^\w*\n?/,"");
+    blocks.push(`<pre class="md-code">${e(inner)}</pre>`);
+    return `\x00B${blocks.length-1}\x00`;
+  });
+  const lines = md.split("\n");
+  let html = "", inUl = false, inOl = false;
+  const closeList = () => {
+    if (inUl) { html += "</ul>"; inUl = false; }
+    if (inOl) { html += "</ol>"; inOl = false; }
+  };
+  for (const raw of lines) {
+    // Restore code block placeholder
+    if (/\x00B\d+\x00/.test(raw)) {
+      closeList();
+      html += raw.replace(/\x00B(\d+)\x00/g, (_,n) => blocks[+n]);
+      continue;
+    }
+    // HR
+    if (/^-{3,}$/.test(raw.trim())) { closeList(); html += "<hr>"; continue; }
+    // Headings
+    const hm = raw.match(/^(#{1,3})\s+(.*)/);
+    if (hm) { closeList(); const lv=hm[1].length; html += `<h${lv}>${inline(e(hm[2]))}</h${lv}>`; continue; }
+    // Unordered list
+    const ul = raw.match(/^[\-\*]\s+(.*)/);
+    if (ul) { if (!inUl) { closeList(); html += "<ul>"; inUl = true; } html += `<li>${inline(e(ul[1]))}</li>`; continue; }
+    // Ordered list
+    const ol = raw.match(/^\d+\.\s+(.*)/);
+    if (ol) { if (!inOl) { closeList(); html += "<ol>"; inOl = true; } html += `<li>${inline(e(ol[1]))}</li>`; continue; }
+    // Blank line
+    if (!raw.trim()) { closeList(); continue; }
+    // Default: paragraph
+    closeList();
+    html += `<p>${inline(e(raw))}</p>`;
+  }
+  closeList();
+  return html;
+}
+
+function inline(s) {
+  return s
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*(.+?)\*/g, "<em>$1</em>");
+}
 function showMsg(id,text,isErr){
   const el=document.getElementById(id);
   if(!el)return; el.textContent=text; el.className="msg "+(isErr?"err":"ok");
 }
 
 async function checkPing(){
-  try{ const r=await fetch("/ping"); document.getElementById("pingDot").style.background=r.ok?"#30d158":"#ff453a"; }
-  catch{ document.getElementById("pingDot").style.background="#ff453a"; }
+  try{ await fetch("/ping"); } catch{}
 }
 
-/* ── Boot ─────────────────────────────────────────── */
+/* ── Boot ── */
 checkPing();
 refreshAll();
 </script>

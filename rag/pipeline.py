@@ -39,6 +39,8 @@ def chunk_text(text: str, chunk_size: int = _DEFAULT_CHUNK_SIZE, overlap: int = 
         chunk = text[start:end].strip()
         if chunk:
             chunks.append(chunk)
+        if end >= len(text):
+            break
         start = end - overlap
 
     return chunks
@@ -57,33 +59,40 @@ class EmbeddingPipeline:
     # Indexing
     # ------------------------------------------------------------------
 
-    def index_file(self, filename: str, content: str) -> int:
-        """Chunk, embed, and store one file. Returns number of chunks indexed."""
+    def index_file(self, filename: str, content: str, on_progress=None) -> int:
+        """Chunk, embed, and store one file. Returns number of chunks indexed.
+
+        on_progress(current, total, filename) is called after each chunk is embedded.
+        """
         logger.info("[pipeline] index_file START  file=%s  content_len=%d", filename, len(content))
 
         chunks = chunk_text(content)
         if not chunks:
-            logger.warning("[pipeline] No chunks produced for %s — content may be empty or whitespace-only", filename)
+            logger.warning("[pipeline] No chunks produced for %s", filename)
             return 0
 
         logger.info("[pipeline] Chunked into %d chunks  file=%s", len(chunks), filename)
         self._store.delete_by_filename(filename)
 
-        embeddings = []
-        for i, chunk in enumerate(chunks):
-            logger.info("[pipeline] Embedding chunk %d/%d  file=%s  provider=%s  model=%s",
-                        i + 1, len(chunks), filename, self._client.provider, self._client.model)
-            try:
-                emb = self._client.embed(chunk)
-            except Exception as e:
-                logger.error("[pipeline] Embedding FAILED at chunk %d/%d  file=%s  error=%s",
-                             i + 1, len(chunks), filename, e)
-                raise
-            embeddings.append(emb)
+        if on_progress:
+            on_progress(0, len(chunks), filename)
 
-        logger.info("[pipeline] All chunks embedded, writing to vector store  file=%s  chunks=%d",
-                    filename, len(chunks))
-        self._store.upsert_chunks(filename, chunks, embeddings)
+        logger.info("[pipeline] Embedding %d chunks in one batch  file=%s", len(chunks), filename)
+        try:
+            embeddings = self._client.embed_batch(chunks)
+        except Exception as e:
+            logger.error("[pipeline] Embedding FAILED  file=%s  error=%s", filename, e)
+            raise
+
+        if on_progress:
+            on_progress(len(chunks), len(chunks), filename)
+
+        logger.info("[pipeline] Writing to ChromaDB  file=%s  chunks=%d", filename, len(chunks))
+        try:
+            self._store.upsert_chunks(filename, chunks, embeddings)
+        except Exception as e:
+            logger.error("[pipeline] ChromaDB upsert FAILED  file=%s  error=%s", filename, e)
+            raise
         self._record_status(filename, len(chunks))
         logger.info("[pipeline] index_file DONE  file=%s  chunks=%d", filename, len(chunks))
         return len(chunks)

@@ -45,15 +45,25 @@ class FileStore:
         """Return text content for a filename.
 
         Lookup order:
-        1. Uploaded slot file (keyed by the workflow's original filename)
+        1. Uploaded slot file(s) (keyed by the workflow's original filename)
         2. Configured files folder (by filename)
+
+        A slot may have multiple files — their content is concatenated with a separator.
         """
-        # 1. Check slot map (user uploaded a replacement)
+        # 1. Check slot map (user uploaded one or more files for this slot)
         if filename in self._file_map:
-            path = Path(self._file_map[filename])
-            if path.exists():
-                return self._read_path(path, filename)
-            logger.warning("Slot file missing on disk: %s — falling through to folder", path)
+            raw   = self._file_map[filename]
+            paths = raw if isinstance(raw, list) else [raw]
+            parts = []
+            for p in paths:
+                path = Path(p)
+                if path.exists():
+                    parts.append(self._read_path(path, Path(p).name))
+                else:
+                    logger.warning("Slot file missing on disk: %s", path)
+            if parts:
+                return "\n\n---\n\n".join(parts)
+            logger.warning("All slot files missing for '%s' — falling through to folder", filename)
 
         # 2. Fall back to configured folder
         if not self.folder:
