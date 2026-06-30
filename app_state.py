@@ -1,8 +1,6 @@
-"""Shared application state and helpers.
+"""App-level singletons and service factory.
 
-Holds the singletons (data dir, key/workflow stores) and small helpers that the
-API routers depend on. Kept separate from main.py so routers can import these
-without pulling in the FastAPI app or each other.
+Single import point for the API layer — replaces the old deps.py + services.py pair.
 """
 import json
 import logging
@@ -12,6 +10,7 @@ from dotenv import load_dotenv
 from syft_core import Client
 
 from providers.embeddings import EmbeddingClient
+from providers.llm import LLMClient
 from rag.pipeline import EmbeddingPipeline
 from storage.file_store import FileStore
 from storage.key_store import KeyStore
@@ -26,7 +25,7 @@ app_name = Path(__file__).resolve().parent.name
 
 
 # ---------------------------------------------------------------------------
-# Singletons
+# Singletons — created once at startup
 # ---------------------------------------------------------------------------
 
 def _init_data_dir() -> Path:
@@ -46,7 +45,7 @@ workflow_store = WorkflowStore(DATA_DIR)
 
 
 # ---------------------------------------------------------------------------
-# File-slot mapping helpers
+# File-slot mapping
 # ---------------------------------------------------------------------------
 
 def load_file_map() -> dict:
@@ -64,46 +63,60 @@ def save_file_map(fmap: dict):
 
 
 # ---------------------------------------------------------------------------
-# Embedding pipeline factory
+# Services — assembled fresh per request/run from current config
 # ---------------------------------------------------------------------------
 
-def make_embed_pipeline() -> EmbeddingPipeline:
+class Services:
+    """Bundles the three things the execution engine needs for one run."""
+    def __init__(self, llm: LLMClient, file_store: FileStore, embed: EmbeddingPipeline):
+        self.llm        = llm
+        self.file_store = file_store
+        self.embed      = embed
+
+
+def _build_llm_client() -> LLMClient:
+    api_keys = {p: v for p in ("openai", "claude", "gemini") if (v := key_store.get(p))}
+    return LLMClient(api_keys=api_keys or None, ollama_host=key_store.get("ollama"))
+
+
+def _build_embed_pipeline() -> EmbeddingPipeline:
     provider = key_store.get("embed_provider") or "openai"
     model    = key_store.get("embed_model")    or "text-embedding-3-small"
     api_key  = key_store.get(provider) or key_store.get("openai")
-    embed_client = EmbeddingClient(
-        provider=provider,
-        model=model,
-        api_key=api_key,
-        ollama_host=key_store.get("ollama"),
+    client   = EmbeddingClient(provider=provider, model=model, api_key=api_key,
+                                ollama_host=key_store.get("ollama"))
+    return EmbeddingPipeline(VectorStore(DATA_DIR), client, DATA_DIR)
+
+
+def make_services() -> Services:
+    """Build the service bundle for one workflow run."""
+    return Services(
+        llm=_build_llm_client(),
+        file_store=FileStore(key_store.get("files_folder"), file_map=load_file_map()),
+        embed=_build_embed_pipeline(),
     )
-    return EmbeddingPipeline(
-        vector_store=VectorStore(DATA_DIR),
-        embed_client=embed_client,
-        data_dir=DATA_DIR,
-    )
+
+
+def make_embed_pipeline() -> EmbeddingPipeline:
+    """Build embedding pipeline — used by the /index endpoint."""
+    return _build_embed_pipeline()
 
 
 # ---------------------------------------------------------------------------
-# Slot embedding — chunk+embed an uploaded slot file into ChromaDB under its
-# slot id, which is exactly the filename the file handler searches at run time.
+# Slot embedding helpers
 # ---------------------------------------------------------------------------
 
 def embed_slot(slot_id: str) -> int:
-    """Index the file currently mapped to slot_id. Returns chunk count.
-
-    Raises if no file is mapped, the embedding provider/key is unavailable, or
-    the file can't be read — callers surface that to the user.
-    """
+    """Chunk + embed an uploaded slot file into ChromaDB. Returns chunk count."""
     store   = FileStore(key_store.get("files_folder"), file_map=load_file_map())
     content = store.get_content(slot_id)
-    return make_embed_pipeline().index_file(slot_id, content)
+    return _build_embed_pipeline().index_file(slot_id, content)
 
 
 def remove_slot_embeddings(slot_id: str):
-    """Drop any indexed chunks + status for a slot (best effort)."""
+    """Drop indexed chunks + status for a slot (best effort)."""
     try:
-        pipeline = make_embed_pipeline()
+        pipeline = _build_embed_pipeline()
         pipeline._store.delete_by_filename(slot_id)
         pipeline.remove_status(slot_id)
     except Exception as e:
@@ -111,7 +124,6 @@ def remove_slot_embeddings(slot_id: str):
 
 
 def read_index_status() -> dict:
-    """Per-file index status, read straight from disk (no ChromaDB needed)."""
     p = DATA_DIR / "index_status.json"
     if p.exists():
         try:

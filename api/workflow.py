@@ -1,16 +1,12 @@
-"""Workflow endpoints: upload / load-from-path / info / clear.
-
-Registered via decorators on the app (not an APIRouter): FastSyftBox discovers
-syft-published endpoints by scanning top-level app.routes for APIRoute instances,
-and the installed FastAPI nests include_router() routes out of that view.
-"""
+"""Workflow endpoints: upload / load-from-path / info / clear."""
 import json
 from pathlib import Path
 
 from fastapi import HTTPException
 from pydantic import BaseModel
 
-from deps import workflow_store, save_file_map
+from app_state import workflow_store, save_file_map
+from core.loader import normalize_export
 
 
 class WorkflowPathRequest(BaseModel):
@@ -18,7 +14,7 @@ class WorkflowPathRequest(BaseModel):
 
 
 class WorkflowUploadRequest(BaseModel):
-    content: str   # raw JSON text of the exported workflow — JSON body rides the syft:// RPC transport
+    content: str   # raw JSON text of the exported workflow
 
 
 def register(app):
@@ -28,8 +24,12 @@ def register(app):
             payload = json.loads(body.content)
         except json.JSONDecodeError as e:
             raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
+        try:
+            payload = normalize_export(payload)   # validate + normalize once, store normalized form
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         workflow_store.save(payload)
-        save_file_map({})  # clear slot mappings from any previous workflow
+        save_file_map({})
         return {"ok": True, "title": payload.get("title", "Untitled")}
 
     @app.post("/workflow/path", tags=["syftbox"])
@@ -41,8 +41,12 @@ def register(app):
             payload = json.loads(p.read_text())
         except json.JSONDecodeError as e:
             raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
+        try:
+            payload = normalize_export(payload)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         workflow_store.save(payload)
-        save_file_map({})  # clear slot mappings from any previous workflow
+        save_file_map({})
         return {"ok": True, "title": payload.get("title", "Untitled")}
 
     @app.get("/workflow/info", tags=["syftbox"])

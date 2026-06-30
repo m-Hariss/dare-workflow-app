@@ -4,7 +4,6 @@ fastsyftbox
 pydantic
 requests
 python-dotenv
-cryptography
 chromadb
 python-multipart
 python-docx

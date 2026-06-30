@@ -33,7 +33,7 @@ from pathlib import Path
 from fastapi.responses import HTMLResponse
 from fastsyftbox import FastSyftBox
 
-from deps import app_name
+from app_state import app_name
 from api import files, index, keys, run, workflow
 
 logger = logging.getLogger(__name__)

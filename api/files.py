@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi import HTTPException
 from pydantic import BaseModel
 
-from deps import (
+from app_state import (
     key_store, load_file_map, save_file_map, UPLOADS_DIR,
     embed_slot, remove_slot_embeddings, read_index_status, workflow_store,
 )

@@ -9,8 +9,6 @@ import json
 import logging
 from pathlib import Path
 
-from core.loader import normalize_export
-
 logger = logging.getLogger(__name__)
 
 # Maps workflow provider names → key_store names
@@ -64,13 +62,6 @@ class WorkflowStore:
         return self._parse(payload) if payload else None
 
     def _parse(self, payload: dict) -> dict:
-        # Normalise to the canonical shape so v1 and v2 parse identically.
-        # An unsupported version shouldn't crash the dashboard — fall back to raw.
-        try:
-            payload = normalize_export(payload)
-        except ValueError as e:
-            logger.warning("Could not normalise workflow for info: %s", e)
-
         nodes = payload.get("nodes", [])
 
         required_providers = set()

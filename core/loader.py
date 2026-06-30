@@ -25,7 +25,7 @@ slot, the embedding index, and the file handler all key on.
 """
 from core.graph import Graph
 
-SUPPORTED_SCHEMA_VERSIONS = {"v1", "v2"}
+SUPPORTED_SCHEMA_VERSIONS = {"v1", "v2", None}  # None = pre-versioning export, treated as v1
 
 
 # ---------------------------------------------------------------------------
@@ -117,6 +117,36 @@ def _adapt_v2_step_node(node: dict):
     node["data"] = data
 
 
+def _adapt_boolean_step_node(node: dict):
+    """Build rag structure from needsContentFiles/needsEmbeddingFiles boolean flags.
+
+    Some exports declare file requirements as boolean flags instead of fileInputs
+    or a rag block. When detected, synthesise the rag structure the step handler
+    expects, using the node id as the slot identifier.
+    """
+    data = node.get("data", {})
+    if "rag" in data:
+        return  # already has rag — nothing to do
+
+    needs_content = data.get("needsContentFiles", False)
+    needs_embed   = data.get("needsEmbeddingFiles", False)
+    if not needs_content and not needs_embed:
+        return
+
+    node_id   = node.get("id", "")
+    retrieval = data.get("retrieval", {})
+    usage     = "embed_and_retrieve" if needs_embed else "retrieve"
+    slot_ref  = {"name": node_id, "slot": True, "label": data.get("label", "File"), "usage": usage}
+
+    data["rag"] = {
+        "contentFiles":               [dict(slot_ref)] if needs_content else [],
+        "embeddingFiles":             [dict(slot_ref)] if needs_embed   else [],
+        "maxContextSnippets":         retrieval.get("maxContextSnippets", 4),
+        "documentSimilarityThreshold": retrieval.get("similarityThreshold", 0.2),
+    }
+    node["data"] = data
+
+
 def _adapt_v2(payload: dict) -> dict:
     for node in payload.get("nodes", []):
         ntype = node.get("type")
@@ -143,11 +173,17 @@ def normalize_export(payload: dict) -> dict:
     if version not in SUPPORTED_SCHEMA_VERSIONS:
         raise ValueError(
             f"Unsupported schema version: {version!r} "
-            f"(supported: {sorted(SUPPORTED_SCHEMA_VERSIONS)})"
+            f"(supported: v1, v2, or unversioned)"
         )
 
     if version == "v2":
         payload = _adapt_v2(payload)
+
+    # Apply boolean-flag adaptation for any step node still missing a rag block.
+    for node in payload.get("nodes", []):
+        if node.get("type") == "step":
+            _adapt_boolean_step_node(node)
+
     return payload
 
 

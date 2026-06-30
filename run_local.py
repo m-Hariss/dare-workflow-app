@@ -14,8 +14,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from app_state import make_services
 from core.engine import ExecutionEngine
-from services import Services
 from core.loader import load_workflow
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
@@ -34,7 +34,7 @@ def main():
 
     payload = json.loads(source.read_text())
     graph   = load_workflow(payload)
-    result  = ExecutionEngine(graph, Services.from_config()).run()
+    result  = ExecutionEngine(graph, make_services()).run()
 
     rendered = json.dumps(result, indent=2, default=str)
     print(rendered)

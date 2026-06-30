@@ -208,11 +208,6 @@ textarea { resize: vertical; min-height: 80px; font-family: inherit; }
         <div class="info" id="wfMeta"></div>
         <button class="btn btn-danger" onclick="clearWorkflow()">Remove</button>
       </div>
-      <div class="divider"></div>
-      <div class="wf-info">
-        <div class="wf-steps" id="wfSteps"></div>
-        <div class="wf-needs" id="wfNeeds"></div>
-      </div>
     </div>
   </div>
 
@@ -228,13 +223,6 @@ textarea { resize: vertical; min-height: 80px; font-family: inherit; }
 
     <!-- Required file slots -->
     <div class="card">
-      <div class="card-row" style="padding-bottom:6px">
-        <div class="icon">📄</div>
-        <div class="info">
-          <h3>Upload your files</h3>
-          <p style="color:#6e6e73;font-size:.76rem">The workflow references these files from Dare. Upload your own version for each one.</p>
-        </div>
-      </div>
       <div class="flist" id="slotList"><p class="fempty">Loading…</p></div>
     </div>
 
@@ -243,8 +231,8 @@ textarea { resize: vertical; min-height: 80px; font-family: inherit; }
       <div class="card-row">
         <div class="icon">📁</div>
         <div class="info">
-          <h3>Or use a files folder <span style="font-size:.7rem;font-weight:400;color:#aeaeb2">fallback</span></h3>
-          <p id="folderPath" style="color:#aeaeb2;font-size:.76rem">Not configured — used only if a slot above has no upload</p>
+          <h3>Files folder</h3>
+          <p id="folderPath" style="color:#aeaeb2;font-size:.76rem">Not set</p>
         </div>
         <button class="btn btn-ghost" onclick="toggleFolderEdit()">Set</button>
       </div>
@@ -258,14 +246,14 @@ textarea { resize: vertical; min-height: 80px; font-family: inherit; }
     </div>
   </div>
 
-  <!-- ④ Embeddings ────────────────────────────────── -->
+  <!-- ④ Search ───────────────────────────────────── -->
   <div class="step" id="step4" style="display:none">
-    <div class="step-hd"><div class="step-num">4</div><h2>Embeddings</h2></div>
+    <div class="step-hd"><div class="step-num">4</div><h2>Search</h2></div>
     <div class="card">
       <div class="card-row">
         <div class="icon">🔍</div>
         <div class="info">
-          <h3>Embedding model</h3>
+          <h3>Search model</h3>
           <p id="embedInfo" style="color:#aeaeb2">Loading…</p>
         </div>
         <button class="btn btn-ghost" onclick="toggleEmbedEdit()">Configure</button>
@@ -296,8 +284,7 @@ textarea { resize: vertical; min-height: 80px; font-family: inherit; }
     <div class="step-hd"><div class="step-num">5</div><h2>Run</h2></div>
     <div class="card" style="padding:16px 18px">
       <div id="userInputWrap" style="display:none;margin-bottom:12px">
-        <p style="font-size:.8rem;color:#6e6e73;margin-bottom:6px">Your input (injected as <code>{{user_input}}</code>)</p>
-        <textarea id="userInput" placeholder="Enter your text here…"></textarea>
+        <textarea id="userInput" placeholder="Enter your input here…"></textarea>
       </div>
       <button class="btn-run" id="runBtn" onclick="runWorkflow()">Run Workflow</button>
       <div class="msg" id="runMsg" style="margin-top:8px"></div>
@@ -341,8 +328,11 @@ async function uploadWorkflow(input) {
     body: JSON.stringify({ content }),
   });
   const d = await r.json();
-  if (r.ok) { showMsg("uploadMsg", "Loaded: " + d.title, false); await refreshAll(); }
-  else showMsg("uploadMsg", d.detail || "Error", true);
+  if (r.ok) {
+    document.getElementById("loadCard").style.display = "none";
+    showMsg("uploadMsg", "Loaded: " + d.title, false);
+    await refreshAll();
+  } else showMsg("uploadMsg", d.detail || "Error", true);
 }
 
 // Read a File as base64 (without the data: prefix) for JSON-safe upload.
@@ -363,8 +353,11 @@ async function loadFromPath() {
     body: JSON.stringify({ path }),
   });
   const d = await r.json();
-  if (r.ok) { showMsg("pathMsg", "Loaded: " + d.title, false); await refreshAll(); }
-  else showMsg("pathMsg", d.detail || "Error", true);
+  if (r.ok) {
+    document.getElementById("loadCard").style.display = "none";
+    showMsg("pathMsg", "Loaded: " + d.title, false);
+    await refreshAll();
+  } else showMsg("pathMsg", d.detail || "Error", true);
 }
 
 async function clearWorkflow() {
@@ -380,37 +373,8 @@ async function clearWorkflow() {
 /* ── Render workflow info ──────────────────────────── */
 function renderWorkflow(info) {
   wfInfo = info;
-
-  // Meta
   document.getElementById("wfMeta").innerHTML =
     `<h3>${esc(info.title)}</h3><p>${esc(info.description || "")}</p>`;
-
-  // Steps
-  const stepsEl = document.getElementById("wfSteps");
-  if (info.steps.length) {
-    stepsEl.innerHTML = info.steps.map(s => `
-      <div class="wf-step">
-        <div>
-          <div class="wf-step-label">${esc(s.label)}</div>
-          <div class="wf-step-model">${esc(s.provider)} / ${esc(s.model)}</div>
-          ${s.prompt ? `<div class="wf-step-prompt">${esc(truncate(s.prompt,120))}</div>` : ""}
-        </div>
-      </div>`).join("");
-  } else {
-    stepsEl.innerHTML = "";
-  }
-
-  // What the workflow needs
-  const needsEl = document.getElementById("wfNeeds");
-  const tags = [];
-  info.required_providers.forEach(p =>
-    tags.push(`<span class="badge miss">${esc(PROVIDER_LABELS[p]||p)}</span>`));
-  if (info.needs_files)      tags.push('<span class="badge miss">📁 Files needed</span>');
-  if (info.needs_embeddings) tags.push('<span class="badge miss">🔍 Embeddings needed</span>');
-  if (info.has_user_input)   tags.push('<span class="badge warn">✏️ Asks for input</span>');
-  needsEl.innerHTML = tags.join("");
-
-  document.getElementById("loadCard").style.display = "none";
   document.getElementById("wfCard").style.display = "";
 }
 
@@ -583,7 +547,7 @@ async function refreshFolder() {
     el.style.color = cfg.files_folder_valid ? "#1d1d1f" : "#d12f2f";
     if (!cfg.files_folder_valid) el.textContent += " ⚠ not found";
   } else {
-    el.textContent = "Not configured — used only if a slot above has no upload";
+    el.textContent = "Not set";
     el.style.color = "#aeaeb2";
   }
 }

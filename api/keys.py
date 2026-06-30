@@ -2,7 +2,7 @@
 from fastapi import HTTPException
 from pydantic import BaseModel
 
-from deps import key_store
+from app_state import key_store
 
 
 class SaveKeyRequest(BaseModel):

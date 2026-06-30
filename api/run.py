@@ -17,9 +17,8 @@ from typing import Optional
 from pydantic import BaseModel
 from syft_core import Client
 
-from deps import app_name, key_store, workflow_store, DATA_DIR, load_file_map
+from app_state import app_name, key_store, workflow_store, DATA_DIR, load_file_map, make_services
 from core.engine import ExecutionEngine
-from services import Services
 from core.loader import load_workflow
 
 logger = logging.getLogger(__name__)
@@ -73,7 +72,7 @@ def _execute_run(run_id: str, payload: dict):
 
     state["total"] = len(graph.nodes)
     try:
-        services = Services.from_config(key_store=key_store, data_dir=DATA_DIR, file_map=load_file_map())
+        services = make_services()
         engine = ExecutionEngine(graph, services)
         state["engine"] = engine          # exposes live per-node progress to the status endpoint
         result = engine.run()
