@@ -36,6 +36,11 @@ from fastsyftbox import FastSyftBox
 from app_state import app_name
 from api import files, index, keys, run, workflow
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
+    datefmt="%H:%M:%S",
+)
 logger = logging.getLogger(__name__)
 
 app = FastSyftBox(

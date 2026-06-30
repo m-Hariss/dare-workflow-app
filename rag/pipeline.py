@@ -59,21 +59,33 @@ class EmbeddingPipeline:
 
     def index_file(self, filename: str, content: str) -> int:
         """Chunk, embed, and store one file. Returns number of chunks indexed."""
+        logger.info("[pipeline] index_file START  file=%s  content_len=%d", filename, len(content))
+
         chunks = chunk_text(content)
         if not chunks:
-            logger.warning("No chunks produced for %s — skipping", filename)
+            logger.warning("[pipeline] No chunks produced for %s — content may be empty or whitespace-only", filename)
             return 0
 
+        logger.info("[pipeline] Chunked into %d chunks  file=%s", len(chunks), filename)
         self._store.delete_by_filename(filename)
 
         embeddings = []
         for i, chunk in enumerate(chunks):
-            emb = self._client.embed(chunk)
+            logger.info("[pipeline] Embedding chunk %d/%d  file=%s  provider=%s  model=%s",
+                        i + 1, len(chunks), filename, self._client.provider, self._client.model)
+            try:
+                emb = self._client.embed(chunk)
+            except Exception as e:
+                logger.error("[pipeline] Embedding FAILED at chunk %d/%d  file=%s  error=%s",
+                             i + 1, len(chunks), filename, e)
+                raise
             embeddings.append(emb)
-            logger.debug("Embedded chunk %d/%d for %s", i + 1, len(chunks), filename)
 
+        logger.info("[pipeline] All chunks embedded, writing to vector store  file=%s  chunks=%d",
+                    filename, len(chunks))
         self._store.upsert_chunks(filename, chunks, embeddings)
         self._record_status(filename, len(chunks))
+        logger.info("[pipeline] index_file DONE  file=%s  chunks=%d", filename, len(chunks))
         return len(chunks)
 
     # ------------------------------------------------------------------

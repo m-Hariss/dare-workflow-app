@@ -108,8 +108,14 @@ def make_embed_pipeline() -> EmbeddingPipeline:
 
 def embed_slot(slot_id: str) -> int:
     """Chunk + embed an uploaded slot file into ChromaDB. Returns chunk count."""
+    logger.info("[embed_slot] START  slot=%s", slot_id)
+    provider = key_store.get("embed_provider") or "openai"
+    model    = key_store.get("embed_model")    or "text-embedding-3-small"
+    api_key  = key_store.get(provider) or key_store.get("openai")
+    logger.info("[embed_slot] Using provider=%s  model=%s  key_set=%s", provider, model, bool(api_key))
     store   = FileStore(key_store.get("files_folder"), file_map=load_file_map())
     content = store.get_content(slot_id)
+    logger.info("[embed_slot] File content retrieved  slot=%s  content_len=%d", slot_id, len(content))
     return _build_embed_pipeline().index_file(slot_id, content)
 
 
